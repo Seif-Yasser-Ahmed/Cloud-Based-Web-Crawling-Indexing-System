@@ -1,0 +1,12 @@
+# Distributed computing
+mpi4py
+
+# Web crawling
+requests
+beautifulsoup4
+
+# Indexing
+whoosh
+
+# Optional: progress bars, dev tools
+tqdm

@@ -1,7 +1,7 @@
 from mpi4py import MPI
 import time
 import logging
-
+from common.utils import load_seed_urls
 # Configure logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - Master - %(levelname)s - %(message)s')
