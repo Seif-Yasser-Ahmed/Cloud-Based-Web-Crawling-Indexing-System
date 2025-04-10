@@ -1,0 +1,5 @@
+https://news.ycombinator.com/
+https://www.python.org/
+https://realpython.com/
+https://www.geeksforgeeks.org/
+https://www.tutorialspoint.com/index.htm
