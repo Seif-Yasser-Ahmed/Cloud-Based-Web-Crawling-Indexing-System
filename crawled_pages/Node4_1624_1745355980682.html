@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
+    <meta name="description" content="Faculty of Engineering" />
+    <meta name="keywords" content="Faculty of Engineering" />
+    <meta name="author" content="ISC - Information Systems Center" />
+    <link rel="shortcut icon" href="/public/int/images/logo.png" />
+    <meta name="csrf-token" content="j8R8rrK3KG1bill5oTdJmw07bICCM4OEzV5ZYg3i" />
+    <title>SIS, Faculty of Engineering - Login</title>
+
+    <script src="/public/int/js/jquery.js"></script>
+
+    <!-- Common CSS -->
+    <link rel="stylesheet" type="text/css" href="/public/int/css/bootstrap.min.css" />
+    <link rel="stylesheet" type="text/css" href="/public/int/fonts/icomoon/icomoon.css" />
+            <link rel="stylesheet" href="/public/int/css/main.css" />
+    
+    <!-- upload files -->
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/jquery.fileuploader.css" media="all">
+
+    <!-- Datatable CSS -->
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/jquery.dataTables.min.css" >
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/responsive.dataTables.min.css" >
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/rowReorder.dataTables.min.css" >
+
+    <link rel="stylesheet" href="https://eng.asu.edu.eg/int/css/dynamic-table.jquery.css" type="text/css">
+
+    <link rel="stylesheet" href="https://eng.asu.edu.eg/vendor/jquery-ui/jquery-ui.css" type="text/css">
+
+    <!-- Chosen Select CSS -->
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/chosen.css">
+
+    <!-- Selectize CSS -->
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/selectize.css">
+
+    <!-- Summernote CSS -->
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/summernote/summernote.css">
+
+    <!-- Faculty CSS -->
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/faculty.css">
+
+    <link rel="stylesheet" type="text/css" href="https://eng.asu.edu.eg/int/css/factory.css">
+
+    
+    <link rel="stylesheet" href="https://eng.asu.edu.eg/vendor/chartist/css/chartist.min.css" type="text/css">
+    <link rel="stylesheet" href="https://eng.asu.edu.eg/vendor/chartist/css/chartist-custom.css" type="text/css">
+
+    
+    <link rel="stylesheet" media="screen" href="https://eng.asu.edu.eg/int/css/ui-bootstrap/jquery-ui.custom.css">
+    <link rel="stylesheet" media="screen" href="https://eng.asu.edu.eg/int/css/handsontable.full.min.css">
+    <link rel="stylesheet" media="screen" href="https://eng.asu.edu.eg/int/css/demo-style.css">
+    <link rel="stylesheet" media="screen" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
+
+    
+
+</head>
+<script src="https://www.google.com/recaptcha/api.js" async defer></script>
+<body>
+<div class="container">
+    <div class="login-screen row align-items-center">
+        <div class="col-xl-12 col-lg-12 col-md-12 col-sm-12">
+            <form id="signin_form" method="post" action="login" aria-label="Login">
+                <input type="hidden" name="_token" value="j8R8rrK3KG1bill5oTdJmw07bICCM4OEzV5ZYg3i">
+                <div class="login-container">
+                    <div class="row no-gutters">
+                        <div class="col-xl-5 col-lg-5 col-md-6 col-sm-12">
+                            <div class="login-box">                                
+                                <a href="/" class="login-logo">
+                                    <img src="https://eng.asu.edu.eg/int/images/asueng-b.png" />
+                                </a>
+                                <h5 style="text-align: center;">Faculty Information System (FIS)</h5>
+                                <p style="text-align: center;"><strong>(FIS) system is for Undergraduate, Postgraduate Students, Alumni and Guests only.</strong></p>
+                                <div class="input-group">
+                                    <span class="input-group-addon btn-lg" id="username"><i class="icon-account_circle"></i></span>
+                                    <input placeholder="Email" id="email" type="email" class="form-control" name="email" value="" required autofocus>
+                                </div>
+                                <br>
+                                <div class="input-group">
+                                    <span class="input-group-addon btn-lg" id="password"><i class="icon-verified_user"></i></span>
+                                    <input placeholder="Password" id="password" type="password" class="form-control" name="password" required>
+                                </div>
+                               
+                                                                    <br>
+                                    <div class="g-recaptcha" id="recaptcha" data-sitekey="6Lf17rUUAAAAAKR0rgH6aM7g0xjtzmxBK6w2T5j1"></div>
+                                    <p class="msg-error"></p> 
+                                                                
+                                <div id='ajax_form_progress_bar' style="background-color: green; width: 0%; height: 2px;"></div>
+                                <br/>
+
+                                
+                                <div class="actions clearfix">
+                                    <button type="submit" class="btn btn-primary">Login <i class="ti ti-angle-double-right"></i> <span id="ajax_form_progress_text"></span></button>
+                                </div>
+                                <div class="or"></div>
+                                <div class="mt-4">
+                                    <a href="https://eng.asu.edu.eg/request_Login" class="additional-link">Can Not Sign In? <span>Press Here</span></a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-xl-7 col-lg-7 col-md-6 col-sm-12">
+                            <div class="login-slider"></div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<footer class="main-footer fixed-btm">
+    Copyright    , <a href="http://isc.eng.asu.edu.eg" title="Information Systems Unit">Information Systems Unit</a>
+    , <a href="https://eng.asu.edu.eg" title="Faculty of Engineering">Faculty of Engineering</a>
+    , <a href="http://asu.edu.eg" title="Ain Shams University">Ain Shams University</a>.
+</footer>
+
+<script type="text/javascript">
+	var dataTableLanguage = {
+	    "lengthMenu": "Show _MENU_ entries",
+	    "search": "Search : ",
+	    "info": "Showing _START_ to _END_ of _TOTAL_",
+	    "infoEmpty": "No records available",
+	    "infoFiltered": "(filtered from _MAX_ total records)",
+	    "loadingRecords": "Loading...",
+	    "processing": "Processing...",
+	    "zeroRecords": "No matching records found",
+	    "paginate": {
+	        "first": "First",
+	        "last": "Last",
+	        "next": "Next",
+	        "previous": "Previous",
+	    },
+	};
+
+	// Loading
+	$(function () {
+		$(".loading-wrapper").fadeOut(500);
+	});
+
+</script>
+
+<script src="/public/int/js/sweetalaert.js"></script>
+<script src="/public/int/js/factory.js?2"></script>
+
+<script src="/public/int/js/tether.min.js"></script>
+<script src="/public/int/js/bootstrap.min.js"></script>
+<script src="/public/int/js/moment.js"></script>
+<script src="/public/int/js/bloodhound.js"></script>
+<script src="/public/int/js/bloodhound.min.js"></script>
+<script src="/public/int/js/typeahead.jquery.min.js"></script>
+<script src="/public/int/js/typeahead.jquery.js"></script>
+<script src="/public/int/js/typeahead.bundle.js"></script>
+<script src="/public/int/js/typeahead.bundle.min.js"></script>
+
+<!-- Datatables JS -->
+<script src="/public/int/js/jquery.dataTables.min.js"></script>
+<script src="/public/int/js/dataTables.responsive.min.js"></script>
+<script src="/public/int/js/dataTables.rowReorder.min.js"></script>
+<script src="/public/int/js/dataTables.fixedColumns.min.js"></script>
+
+<script type="text/javascript" src="/public/int/js/moment.js"></script>
+<script type="text/javascript" src="/public/int/js/dynamic-table.jquery.js"></script>
+<script type="text/javascript" src="/public/int/js/dynamic-table-editor.jquery.js"></script>
+
+<!-- Upload files -->
+<script src="/public/int/js/jquery.fileuploader.js"></script>
+
+<!-- Chosen Select JS -->
+<script src="/public/int/js/chosen.jquery.js"></script>
+
+<!-- Selectize JS -->
+<script src="/public/int/js/selectize.js" charset='UTF-8'></script>
+
+<!-- Summernote IS -->
+<script src="/public/int/js/summernote.js"></script>
+<script src="/public/int/js/jquery-confirm.js"></script>
+<script src="/public/int/js/common.js"></script>
+<script src="/public/int/js/printThis.js"></script>
+
+
+<script src="/public/int/js/handsontable.full.min.js"></script>
+<script src="/public/int/js/numeral.sv-se.js"></script>
+
+<script src="/vendor/ckeditor/ckeditor.js"></script>
+<script src="/vendor/ckeditor/adapters/jquery.js"></script>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+
+
+</body>
+</html>
