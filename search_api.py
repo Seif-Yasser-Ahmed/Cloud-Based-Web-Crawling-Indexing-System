@@ -1,3 +1,4 @@
+# search_api.py
 import os
 from flask import Flask, request, jsonify
 from whoosh.index import open_dir
@@ -13,7 +14,7 @@ def search():
         return jsonify([])
 
     with ix.searcher() as searcher:
-        parser = MultifieldParser(["title","content"], schema=ix.schema)
+        parser = MultifieldParser(["title", "content"], schema=ix.schema)
         query = parser.parse(f"{q}*")
         hits = searcher.search(query, limit=20)
         return jsonify([hit["url"] for hit in hits])
