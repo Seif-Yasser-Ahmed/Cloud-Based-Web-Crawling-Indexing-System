@@ -1,4 +1,7 @@
-import os, json, time
+# aws_adapter.py
+import os
+import json
+import time
 import boto3
 from botocore.exceptions import ClientError
 
@@ -21,7 +24,6 @@ class SqsQueue:
     def delete(self, receipt_handle: str):
         self.client.delete_message(QueueUrl=self.url, ReceiptHandle=receipt_handle)
 
-
 class S3Storage:
     def __init__(self, bucket: str):
         self.bucket = bucket
@@ -35,22 +37,27 @@ class S3Storage:
         obj = self.client.get_object(Bucket=self.bucket, Key=key)
         return obj['Body'].read().decode('utf-8')
 
-
 class DynamoState:
     def __init__(self, table_name: str):
-        self.table = boto3.resource('dynamodb', region_name=os.environ['AWS_REGION']) \
-                         .Table(table_name)
+        self.table = boto3.resource('dynamodb', region_name=os.environ['AWS_REGION']).Table(table_name)
 
     def get(self, url: str) -> dict:
         resp = self.table.get_item(Key={'url': url})
         return resp.get('Item', {})
 
+    def scan_all(self) -> list:
+        """Return all items in the URL table."""
+        resp = self.table.scan()
+        return resp.get('Items', [])
+
     def update(self, url: str, **attrs):
         expr = 'SET ' + ', '.join(f"{k}=:{k}" for k in attrs)
         vals = {f":{k}": v for k, v in attrs.items()}
-        self.table.update_item(Key={'url': url},
-                               UpdateExpression=expr,
-                               ExpressionAttributeValues=vals)
+        self.table.update_item(
+            Key={'url': url},
+            UpdateExpression=expr,
+            ExpressionAttributeValues=vals
+        )
 
     def delete(self, url: str):
         self.table.delete_item(Key={'url': url})
@@ -98,11 +105,9 @@ class DynamoState:
                 return False
             raise
 
-
 class HeartbeatManager:
     def __init__(self, table_name: str, timeout=10):
-        self.table = boto3.resource('dynamodb', region_name=os.environ['AWS_REGION']) \
-                         .Table(table_name)
+        self.table = boto3.resource('dynamodb', region_name=os.environ['AWS_REGION']).Table(table_name)
         self.timeout = timeout
 
     def update(self, node_id: str):
