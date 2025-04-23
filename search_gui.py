@@ -6,6 +6,7 @@ import logging
 import time
 from whoosh.index import create_in, open_dir
 from whoosh.qparser import MultifieldParser
+from indexer import Indexer
 
 
 # Removed unused import
@@ -32,6 +33,7 @@ class SearchApp(tk.Tk):
         self._create_styles()
         self._build_ui()
         self.current_query = ""
+        self.indexer = Indexer(index)
         self.last_results = []
         self.after(1000, self._auto_refresh_search)
         self.after(2000, self._update_node_status)
@@ -100,22 +102,13 @@ class SearchApp(tk.Tk):
         results = []
 
 
-        with ix.searcher() as searcher:
-            query_parser = MultifieldParser(["title", "content"], schema=ix.schema)
-            try:
-                if len(self.current_query) == 1:
-                    query = query_parser.parse(f'{self.current_query}*')
-                else:
-                    query = query_parser.parse(self.current_query + "*")
-                logging.info(f"Parsed query: {query}")
-            except Exception as e:
-                logging.error(f"Error parsing query: {e}")
-                messagebox.showerror("Search Error", "Invalid query format.")
-                return
-
-            search_results = searcher.search(query, limit=None)
-            for hit in search_results:
-                results.append(hit["url"])
+        try:
+            results = self.indexer.search(self.current_query + "*")  # Add wildcard for partial matching
+            logging.info(f"Search results: {results}")
+        except Exception as e:
+            logging.error(f"Error during search: {e}")
+            messagebox.showerror("Search Error", "An error occurred while searching.")
+            return
 
 
         # for _, urls in self.index.items():
