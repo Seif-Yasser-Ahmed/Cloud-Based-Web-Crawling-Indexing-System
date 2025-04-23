@@ -32,8 +32,7 @@ def indexer_worker( index_queue,heartbeat_manager, node_id="Indexer"):
         #     for word in words:
         #         shared_index.setdefault(word, set()).add(url)
        
-        with AsyncWriter(ix) as writer:
-            writer.update_document(url=url, content=text) 
+      indexer_instance.index_document(url=url, html_content=text)
            
 
 
