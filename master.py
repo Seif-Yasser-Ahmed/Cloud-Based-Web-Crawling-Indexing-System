@@ -7,10 +7,10 @@ from aws_adapter import SqsQueue, DynamoState, HeartbeatManager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - MASTER - %(levelname)s - %(message)s")
 
 def main():
-    crawl_q = SqsQueue(os.environ["CRAWL_QUEUE_URL"])
+    crawl_q = SqsQueue(os.environ["crawlTaskQueue"])
     seeds = os.environ.get("SEED_URLS", "").split(",")
     depth = int(os.environ.get("MAX_DEPTH", "1"))
-    state = DynamoState(os.environ["URL_TABLE"])
+    state = DynamoState(os.environ["URL_STATE"])
     hb_mgr = HeartbeatManager(os.environ["HEARTBEAT_TABLE"], timeout=int(os.environ.get("HEARTBEAT_TIMEOUT","60")))
 
     # Enqueue and mark seeds
