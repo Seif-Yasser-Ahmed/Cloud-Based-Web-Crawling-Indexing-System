@@ -11,11 +11,14 @@ from search_gui import SearchApp
 from heartbeat_monitor import HeartbeatManager
 from whoosh.writing import AsyncWriter
 from whoosh.index import open_dir
+from indexer import Indexer
+
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
 INDEX_DIR = "indexdir"
 ix = open_dir(INDEX_DIR)
+indexer_instance = Indexer(ix)
 
 #woh
 # def indexer_worker(shared_index, index_queue, index_lock, heartbeat_manager, node_id="Indexer"):
