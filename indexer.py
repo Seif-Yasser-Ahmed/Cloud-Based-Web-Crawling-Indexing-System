@@ -1,57 +1,50 @@
 # indexer.py
-import os
-import json
-import logging
-from aws_adapter import SqsQueue, S3Storage, DynamoState
-from whoosh.fields import Schema, ID, TEXT
-from whoosh.index import create_in, open_dir
-from whoosh.writing import AsyncWriter
+import time
 from bs4 import BeautifulSoup
+from aws_adapter import SqsQueue, S3Client, DynamoDBAdapter
+from config import INDEX_QUEUE_URL, S3_BUCKET
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - INDEXER - %(levelname)s - %(message)s")
+from whoosh.index import create_in, open_dir
+from whoosh.fields import Schema, TEXT, ID
+import os
 
-# initialize Whoosh index
-if not os.path.exists('indexdir'):
-    os.mkdir('indexdir')
-    ix = create_in('indexdir', Schema(
-        url=ID(stored=True, unique=True),
-        title=TEXT(stored=True),
-        content=TEXT))
+# Setup
+indexdir = "indexdir"
+schema   = Schema(url=ID(stored=True), content=TEXT)
+if not os.path.exists(indexdir):
+    os.makedirs(indexdir)
+    ix = create_in(indexdir, schema)
 else:
-    ix = open_dir('indexdir')
+    ix = open_dir(indexdir)
 
-def indexer_worker():
-    idx_q = SqsQueue(os.environ['INDEX_QUEUE_URL'])
-    storage = S3Storage(os.environ['S3_BUCKET'])
-    state = DynamoState(os.environ['URL_TABLE'])
+index_q = SqsQueue(INDEX_QUEUE_URL)
+s3      = S3Client(S3_BUCKET)
+url_db  = DynamoDBAdapter("UrlStateTable")
 
+def run_indexer():
     while True:
-        msgs = idx_q.receive(max_messages=1, wait=20)
+        msgs = index_q.receive()
         if not msgs:
+            time.sleep(1)
             continue
 
-        for m in msgs:
-            task = json.loads(m['Body'])
-            url = task['url']
-            key = task['s3_key']
-            receipt = m['ReceiptHandle']
+        m  = msgs[0]
+        url, rh = m["Body"], m["ReceiptHandle"]
+        url_db.set_state(url, "INDEX_IN_PROGRESS")
+        try:
+            obj = s3.client.get_object(Bucket=S3_BUCKET, Key=f"pages/*/{url.split('//')[-1]}.html")
+            html = obj["Body"].read().decode("utf-8", errors="ignore")
+            text = BeautifulSoup(html, "html.parser").get_text()
 
-            if not state.claim_index(url):
-                idx_q.delete(receipt)
-                continue
+            w = ix.writer()
+            w.add_document(url=url, content=text)
+            w.commit()
 
-            try:
-                html = storage.download(key)
-                soup = BeautifulSoup(html, 'html.parser')
-                text = soup.get_text(separator=' ')
-                title = (soup.title.string or 'No Title').strip()
-                with AsyncWriter(ix) as writer:
-                    writer.update_document(url=url, title=title, content=text)
-                logging.info(f"Indexed {url}")
-            except Exception as e:
-                logging.error(f"Error indexing {url}: {e}", exc_info=True)
-            finally:
-                idx_q.delete(receipt)
+            url_db.set_state(url, "INDEXED")
+            index_q.delete(rh)
+        except Exception as e:
+            url_db.set_state(url, "INDEX_FAILED", error=str(e))
+        time.sleep(0.1)
 
 if __name__ == "__main__":
-    indexer_worker()
+    run_indexer()
