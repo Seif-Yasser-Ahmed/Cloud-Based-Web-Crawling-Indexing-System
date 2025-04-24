@@ -65,8 +65,9 @@ class DynamoState:
     Manages URL crawl/index state in a DynamoDB table.
     """
     def __init__(self, table_name: str):
-        self.table = boto3.resource('dynamodb', region_name=os.environ.get('AWS_REGION'))
-                          .Table(table_name)
+        self.table = boto3.resource(
+            'dynamodb', region_name=os.environ.get('AWS_REGION')
+        ).Table(table_name)
 
     def get(self, url: str) -> dict:
         """Retrieve the item for a given URL."""
@@ -145,8 +146,9 @@ class HeartbeatManager:
     Records and checks node heartbeats in a DynamoDB table.
     """
     def __init__(self, table_name: str, timeout: int = 10):
-        self.table = boto3.resource('dynamodb', region_name=os.environ.get('AWS_REGION'))
-                          .Table(table_name)
+        self.table = boto3.resource(
+            'dynamodb', region_name=os.environ.get('AWS_REGION')
+        ).Table(table_name)
         self.timeout = timeout
 
     def update(self, node_id: str):
