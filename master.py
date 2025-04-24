@@ -1,29 +1,27 @@
 # master.py
-import os
 import time
-import logging
-from aws_adapter import SqsQueue, DynamoState, HeartbeatManager
+from aws_adapter import SqsQueue, DynamoDBAdapter
+from config import CRAWL_QUEUE_URL, IN_PROGRESS_TIMEOUT, MASTER_POLL_INTERVAL
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - MASTER - %(levelname)s - %(message)s")
+crawl_q = SqsQueue(CRAWL_QUEUE_URL)
+url_db  = DynamoDBAdapter("UrlStateTable")
 
-def main():
-    crawl_q = SqsQueue(os.environ["crawlTaskQueue"])
-    seeds = os.environ.get("SEED_URLS", "").split(",")
-    depth = int(os.environ.get("MAX_DEPTH", "1"))
-    state = DynamoState(os.environ["URL_STATE"])
-    hb_mgr = HeartbeatManager(os.environ["HEARTBEAT_TABLE"], timeout=int(os.environ.get("HEARTBEAT_TIMEOUT","60")))
+def seed(seeds):
+    for u in seeds:
+        crawl_q.send(u)
+        url_db.set_state(u, "OPEN")
 
-    # Enqueue and mark seeds
-    for url in filter(None, seeds):
-        logging.info(f"Enqueue seed {url} (depth={depth})")
-        crawl_q.send({"url": url, "depth": depth})
-        state.update(url, crawl_status="OPEN")
+def requeue_stalled():
+    for url in url_db.get_stalled(IN_PROGRESS_TIMEOUT):
+        crawl_q.send(url)
+        url_db.set_state(url, "OPEN")
 
-    logging.info("All seeds enqueued; entering monitor loop.")
-
+def run_master(seeds):
+    seed(seeds)
     while True:
-        # (future) master heartbeat or requeue logic could go here
-        time.sleep(60)
+        requeue_stalled()
+        time.sleep(MASTER_POLL_INTERVAL)
 
 if __name__ == "__main__":
-    main()
+    seeds = ["https://example.com", "https://example.org"]
+    run_master(seeds)
