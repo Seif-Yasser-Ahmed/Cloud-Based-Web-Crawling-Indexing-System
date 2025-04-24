@@ -2,8 +2,7 @@
 import time
 from bs4 import BeautifulSoup
 from aws_adapter import SqsQueue, S3Client, DynamoDBAdapter
-from config import INDEX_QUEUE_URL, S3_BUCKET
-
+from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, MAX_CRAWL_DELAY , URL_TABLE, HEARTBEAT_TABLE 
 from whoosh.index import create_in, open_dir
 from whoosh.fields import Schema, TEXT, ID
 import os
@@ -19,7 +18,7 @@ else:
 
 index_q = SqsQueue(INDEX_QUEUE_URL)
 s3      = S3Client(S3_BUCKET)
-url_db  = DynamoDBAdapter("UrlStateTable")
+url_db  = DynamoDBAdapter(URL_TABLE)
 
 def run_indexer():
     while True:
