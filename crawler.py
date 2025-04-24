@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from robotexclusionrulesparser import RobotExclusionRulesParser
-from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, CRAWL_DELAY
+from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, MAX_CRAWL_DELAY      
 from aws_adapter import SqsQueue, S3Client, DynamoDBAdapter
 
 crawl_q = SqsQueue(CRAWL_QUEUE_URL)
@@ -28,7 +28,7 @@ def crawl(worker_id):
     while True:
         msgs = crawl_q.receive()
         if not msgs:
-            time.sleep(CRAWL_DELAY)
+            time.sleep(MAX_CRAWL_DELAY)
             continue
 
         msg = msgs[0]
