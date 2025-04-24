@@ -1,12 +1,7 @@
-# Distributed computing
-mpi4py
 
-# Web crawling
+boto3
+python-dotenv
 requests
 beautifulsoup4
-
-# Indexing
+robotexclusionrulesparser
 whoosh
-
-# Optional: progress bars, dev tools
-tqdm
