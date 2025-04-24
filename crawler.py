@@ -68,7 +68,7 @@ def crawl(worker_id):
             url_db.set_state(url, "FAILED", error=str(e))
             # leave the message in the queue for retry
 
-        time.sleep(CRAWL_DELAY)
+        time.sleep(MAX_CRAWL_DELAY)
 
 if __name__ == "__main__":
     crawl(worker_id="crawler-1")
