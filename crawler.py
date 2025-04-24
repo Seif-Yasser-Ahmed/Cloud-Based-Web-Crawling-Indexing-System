@@ -35,9 +35,16 @@ def crawler_worker():
         if not msgs:
             continue
 
-        # 2) Extract task
-        m     = msgs[0]
-        task  = json.loads(m['Body'])
+        m    = msgs[0]
+        body = m['Body']
+        # Handle non-JSON messages gracefully
+        try:
+            task = json.loads(body)
+        except json.JSONDecodeError:
+            print(f"DEBUG: skipping non-JSON message body: {body!r}")
+            crawl_q.delete(m['ReceiptHandle'])
+            continue
+
         url   = task.get('url')
         depth = task.get('depth', 1)
         rh    = m['ReceiptHandle']
@@ -45,7 +52,7 @@ def crawler_worker():
         if start_net is None:
             start_net = urlparse(url).netloc
 
-        # 3) Claim in Dynamo
+        # 2) Claim in Dynamo
         print(f"DEBUG: attempting claim_crawl for {url}")
         if not state.claim_crawl(url):
             print(f"DEBUG: claim_crawl failed, deleting message")
@@ -54,11 +61,11 @@ def crawler_worker():
 
         print(f"DEBUG: state after claim: {state.get(url)}")
 
-        # 4) Politeness delay
+        # 3) Politeness delay
         print(f"DEBUG: sleeping for {delay}s before fetch")
         time.sleep(delay)
 
-        # 5) Fetch with retries
+        # 4) Fetch with retries
         success = False
         for attempt in range(1, max_retries + 1):
             try:
@@ -80,13 +87,13 @@ def crawler_worker():
             crawl_q.delete(rh)
             continue
 
-        # 6) Upload to S3
+        # 5) Upload to S3
         s3_key = f"pages/{node_id}/{uuid4().hex}.html"
         print(f"DEBUG: uploading HTML to S3 at key={s3_key}")
         storage.upload(s3_key, html)
         state.complete_crawl(url, s3_key)
 
-        # 7) Parse links
+        # 6) Parse links
         soup     = BeautifulSoup(html, 'html.parser')
         children = []
         for a in soup.find_all('a', href=True):
@@ -98,21 +105,22 @@ def crawler_worker():
                 continue
             children.append(full)
 
-        # 8) Enqueue for indexing
+        # 7) Enqueue for indexing
         print(f"DEBUG: sending to index queue → url={url}, s3_key={s3_key}")
         index_q.send({'url': url, 's3_key': s3_key})
 
-        # 9) Enqueue children for further crawling
+        # 8) Enqueue children for further crawling
         if depth > 0:
             for c in children:
                 print(f"DEBUG: enqueuing child → url={c}, depth={depth-1}")
                 crawl_q.send({'url': c, 'depth': depth - 1})
 
-        # 10) Delete processed message
+        # 9) Delete processed message
         print(f"DEBUG: deleting message for {url}")
         crawl_q.delete(rh)
 
         logging.info(f"{node_id} crawled {url}, found {len(children)} links")
+
 
 if __name__ == '__main__':
     crawler_worker()
