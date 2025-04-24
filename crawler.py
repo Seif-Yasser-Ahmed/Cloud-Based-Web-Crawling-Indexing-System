@@ -3,8 +3,8 @@ import time
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-from robotexclusionrulesparser import RobotFileParserEx
-from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, MAX_CRAWL_DELAY
+from robotexclusionrulesparser import RobotExclusionRulesParser
+from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, CRAWL_DELAY
 from aws_adapter import SqsQueue, S3Client, DynamoDBAdapter
 
 crawl_q = SqsQueue(CRAWL_QUEUE_URL)
@@ -14,10 +14,10 @@ url_db = DynamoDBAdapter("UrlStateTable")        # or use config.URL_TABLE
 hb_db  = DynamoDBAdapter("CrawlerHeartbeatTable")
 
 def make_robot_checker(base_url):
-    rp = RobotFileParserEx()
+    rp = RobotExclusionRulesParser()
     try:
         rp.fetch(urljoin(base_url, "/robots.txt"))
-    except:
+    except Exception:
         return lambda _: True
     return lambda path: rp.is_allowed("*", path)
 
@@ -28,7 +28,7 @@ def crawl(worker_id):
     while True:
         msgs = crawl_q.receive()
         if not msgs:
-            time.sleep(MAX_CRAWL_DELAY)
+            time.sleep(CRAWL_DELAY)
             continue
 
         msg = msgs[0]
@@ -66,6 +66,9 @@ def crawl(worker_id):
         except Exception as e:
             failure += 1
             url_db.set_state(url, "FAILED", error=str(e))
-            # leave message for retry
+            # leave the message in the queue for retry
 
-        time.sleep(MAX_CRAWL_DELAY)
+        time.sleep(CRAWL_DELAY)
+
+if __name__ == "__main__":
+    crawl(worker_id="crawler-1")
