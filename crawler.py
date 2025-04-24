@@ -24,7 +24,7 @@ def make_robot_checker(base_url):
 def crawl(worker_id):
     robot_rules = {}
     success, failure = 0, 0
-
+    print(worker_id)
     while True:
         msgs = crawl_q.receive()
         if not msgs:
