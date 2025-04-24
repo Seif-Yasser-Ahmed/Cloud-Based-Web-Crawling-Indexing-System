@@ -59,25 +59,48 @@ class DynamoState:
     def delete(self, url: str):
         self.table.delete_item(Key={'url': url})
 
-    def claim_crawl(self, url: str) -> bool:
+    def claim_crawl(self, url: str, force: bool = False, max_age_secs: int = None) -> bool:
+        """
+        Attempts to mark this URL as IN_PROGRESS so a crawler can fetch it.
+        By default only succeeds if no record exists or crawl_status = OPEN.
+        If force=True, also allows re-crawling DONE items.
+        If max_age_secs is set, also allows re-crawl of DONE items older than that many seconds.
+        """
         now = int(time.time())
+        # Base expressions for marking IN_PROGRESS
+        update_expr = "SET crawl_status = :inprog, ts = :now, tries = if_not_exists(tries, :zero) + :one"
+
+        # Build condition clauses
+        conditions = [
+            "attribute_not_exists(crawl_status)",
+            "crawl_status = :open"
+        ]
+
+        expr_vals = {
+            ":inprog": "IN_PROGRESS",
+            ":open":   "OPEN",
+            ":now":    now,
+            ":zero":   0,
+            ":one":    1
+        }
+
+        # Allow force re-crawl of DONE items
+        if force:
+            conditions.append("crawl_status = :done")
+            expr_vals[":done"] = "DONE"
+
+        # Allow re-crawl if older than max_age_secs
+        if max_age_secs is not None:
+            conditions.append("crawl_status = :done AND ts < :stale_time")
+            expr_vals[":stale_time"] = now - max_age_secs
+            expr_vals[":done"] = "DONE"
+
         try:
             self.table.update_item(
                 Key={'url': url},
-                UpdateExpression=(
-                    "SET crawl_status = :inprog, ts = :now, "
-                    "tries = if_not_exists(tries, :zero) + :one"
-                ),
-                ConditionExpression=(
-                    "attribute_not_exists(crawl_status) OR crawl_status = :open"
-                ),
-                ExpressionAttributeValues={
-                    ":inprog": "IN_PROGRESS",
-                    ":open": "OPEN",
-                    ":now": now,
-                    ":zero": 0,
-                    ":one": 1
-                }
+                UpdateExpression=update_expr,
+                ConditionExpression=" OR ".join(conditions),
+                ExpressionAttributeValues=expr_vals
             )
             return True
         except ClientError as e:
@@ -97,12 +120,12 @@ class DynamoState:
                 ConditionExpression="attribute_not_exists(#idx) OR #idx = :false",
                 ExpressionAttributeNames={
                     "#idx": "indexed",
-                    "#ts": "idx_ts"
+                    "#ts":  "idx_ts"
                 },
                 ExpressionAttributeValues={
                     ":true": True,
                     ":false": False,
-                    ":now": now
+                    ":now":   now
                 }
             )
             return True
@@ -113,7 +136,7 @@ class DynamoState:
 
 
 class HeartbeatManager:
-    def __init__(self, table_name: str, timeout=10):
+    def __init__(self, table_name: str, timeout: int = 10):
         self.table = boto3.resource('dynamodb', region_name=os.environ['AWS_REGION']) \
                          .Table(table_name)
         self.timeout = timeout
