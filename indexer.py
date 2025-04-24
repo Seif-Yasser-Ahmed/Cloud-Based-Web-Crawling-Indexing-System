@@ -1,49 +1,80 @@
-# indexer.py
-import time
-from bs4 import BeautifulSoup
-from aws_adapter import SqsQueue, S3Client, DynamoDBAdapter
-from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, MAX_CRAWL_DELAY , URL_TABLE, HEARTBEAT_TABLE 
-from whoosh.index import create_in, open_dir
-from whoosh.fields import Schema, TEXT, ID
 import os
+import json
+import logging
+from whoosh.fields import Schema, ID, TEXT
+from whoosh.index import create_in, open_dir
+from whoosh.writing import AsyncWriter
+from bs4 import BeautifulSoup
 
-# Setup
-indexdir = "indexdir"
-schema   = Schema(url=ID(stored=True), content=TEXT)
-if not os.path.exists(indexdir):
-    os.makedirs(indexdir)
-    ix = create_in(indexdir, schema)
+from aws_adapter import SqsQueue, S3Storage, DynamoState
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - INDEXER - %(levelname)s - %(message)s")
+
+# Ensure index directory exists and open/create Whoosh index
+INDEX_DIR = os.environ.get('INDEX_DIR', 'indexdir')
+if not os.path.exists(INDEX_DIR):
+    os.makedirs(INDEX_DIR)
+    ix = create_in(
+        INDEX_DIR,
+        Schema(
+            url=ID(stored=True, unique=True),
+            title=TEXT(stored=True),
+            content=TEXT
+        )
+    )
 else:
-    ix = open_dir(indexdir)
+    ix = open_dir(INDEX_DIR)
 
-index_q = SqsQueue(INDEX_QUEUE_URL)
-s3      = S3Client(S3_BUCKET)
-url_db  = DynamoDBAdapter(URL_TABLE)
 
-def run_indexer():
+def indexer_worker():
+    idx_q    = SqsQueue(os.environ['INDEX_QUEUE_URL'])
+    storage  = S3Storage(os.environ['S3_BUCKET'])
+    state    = DynamoState(os.environ['URL_TABLE'])
+
+    logging.info(f"Indexer started; polling {idx_q.url}")
     while True:
-        msgs = index_q.receive()
+        msgs = idx_q.receive(1, 20)
         if not msgs:
-            time.sleep(1)
             continue
 
-        m  = msgs[0]
-        url, rh = m["Body"], m["ReceiptHandle"]
-        url_db.set_state(url, "INDEX_IN_PROGRESS")
+        m    = msgs[0]
+        body = m['Body']
         try:
-            obj = s3.client.get_object(Bucket=S3_BUCKET, Key=f"pages/*/{url.split('//')[-1]}.html")
-            html = obj["Body"].read().decode("utf-8", errors="ignore")
-            text = BeautifulSoup(html, "html.parser").get_text()
+            task = json.loads(body)
+        except json.JSONDecodeError:
+            logging.warning(f"Skipping non-JSON message: {body}")
+            idx_q.delete(m['ReceiptHandle'])
+            continue
 
-            w = ix.writer()
-            w.add_document(url=url, content=text)
-            w.commit()
+        url   = task.get('url')
+        key   = task.get('s3_key')
+        rh    = m['ReceiptHandle']
 
-            url_db.set_state(url, "INDEXED")
-            index_q.delete(rh)
+        # Claim for indexing
+        if not state.claim_index(url):
+            logging.info(f"Already indexed {url}; deleting message")
+            idx_q.delete(rh)
+            continue
+
+        try:
+            # Download HTML and extract text
+            html = storage.download(key)
+            soup = BeautifulSoup(html, 'html.parser')
+            title = (soup.title.string or 'No Title').strip()
+            content = soup.get_text(separator=' ')
+
+            # Update Whoosh index
+            with AsyncWriter(ix) as writer:
+                writer.update_document(url=url, title=title, content=content)
+
+            logging.info(f"Indexed {url}")
         except Exception as e:
-            url_db.set_state(url, "INDEX_FAILED", error=str(e))
-        time.sleep(0.1)
+            logging.error(f"Error indexing {url}: {e}", exc_info=True)
+        finally:
+            # Always delete the message to avoid retry storms
+            idx_q.delete(rh)
 
-if __name__ == "__main__":
-    run_indexer()
+
+if __name__ == '__main__':
+    indexer_worker()
