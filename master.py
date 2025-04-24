@@ -1,22 +1,39 @@
 import os
 import logging
 from aws_adapter import SqsQueue
+from dotenv import load_dotenv
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - MASTER - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - MASTER - %(levelname)s - %(message)s"
+)
 
 def main():
-    # Load the crawl queue URL and seeds/depth from environment
+    # Load AWS_REGION, CRAWL_QUEUE_URL, etc. from your .env
+    load_dotenv()
+
     crawl_q = SqsQueue(os.environ["CRAWL_QUEUE_URL"])
-    seeds   = os.environ.get("SEED_URLS", "").split(",")
-    depth   = int(os.environ.get("MAX_DEPTH", "1"))
+    logging.info("Interactive master started. Enter seed URLs; blank URL to exit.")
 
-    # Enqueue each non-empty seed URL as a JSON payload
-    for url in filter(None, seeds):
-        logging.info(f"Enqueue seed {url} (depth={depth})")
-        crawl_q.send({"url": url, "depth": depth})
+    try:
+        while True:
+            url = input("Seed URL (blank to quit): ").strip()
+            if not url:
+                break
 
-    logging.info("All seeds enqueued; master exiting.")
+            depth_str = input("Depth (integer): ").strip()
+            try:
+                depth = int(depth_str)
+            except ValueError:
+                print(" → Invalid depth; please enter an integer.")
+                continue
+
+            crawl_q.send({"url": url, "depth": depth})
+            logging.info(f"Enqueued seed {url} with depth={depth}")
+
+    except (KeyboardInterrupt, EOFError):
+        print("\nShutting down master.")
+    logging.info("Master exited.")
 
 if __name__ == "__main__":
     main()
