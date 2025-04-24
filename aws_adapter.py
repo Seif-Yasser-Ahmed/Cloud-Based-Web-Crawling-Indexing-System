@@ -1,125 +1,164 @@
+import os
+import json
 import time
 import boto3
-from botocore.config import Config as BotoConfig
-from boto3.dynamodb.conditions import Attr
-from config import (
-    CRAWL_QUEUE_URL,
-    INDEX_QUEUE_URL,
-    S3_BUCKET,
-    URL_TABLE,
-    HEARTBEAT_TABLE
-)
+from botocore.exceptions import ClientError
 
-# Boto3 retry configuration
-try:
-    boto_config = BotoConfig(retries={"max_attempts": 5, "mode": "standard"})
-except Exception:
-    boto_config = None  # proceed without custom retry config
 
 class SqsQueue:
     """
-    Wrapper around an SQS queue, resolving ARNs to URLs if needed.
+    Wrapper around AWS SQS for sending, receiving, and deleting messages.
     """
-    def __init__(self, identifier):
-        # Initialize SQS client with explicit region
-        self.client = boto3.client(
-            "sqs",
-            region_name="eu-north-1",
-            config=boto_config
-        )
-        # Resolve ARN to URL, or accept a direct URL
-        if identifier.startswith("arn:aws:sqs"):
-            parts = identifier.split(":")
-            queue_name = parts[-1]
-            account_id = parts[4]
-            resp = self.client.get_queue_url(
-                QueueName=queue_name,
-                QueueOwnerAWSAccountId=account_id
-            )
-            self.url = resp["QueueUrl"]
-        else:
-            self.url = identifier
+    def __init__(self, url: str):
+        self.url = url
+        self.client = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 
-    def send(self, body, attrs=None):
-        """Send a message to the queue."""
-        return self.client.send_message(
+    def send(self, payload: dict):
+        """Send a JSON-serializable payload to the queue."""
+        self.client.send_message(
             QueueUrl=self.url,
-            MessageBody=body,
-            MessageAttributes=attrs or {}
+            MessageBody=json.dumps(payload)
         )
 
-    def receive(self, max_messages=1, wait_time=10):
-        """Receive messages from the queue."""
+    def receive(self, max_messages: int = 1, wait: int = 20) -> list:
+        """Receive up to `max_messages` from the queue, waiting `wait` seconds if empty."""
         resp = self.client.receive_message(
             QueueUrl=self.url,
             MaxNumberOfMessages=max_messages,
-            WaitTimeSeconds=wait_time,
-            MessageAttributeNames=["All"]
+            WaitTimeSeconds=wait
         )
-        return resp.get("Messages", [])
+        return resp.get('Messages', [])
 
-    def delete(self, receipt_handle):
+    def delete(self, receipt_handle: str):
         """Delete a message from the queue by its receipt handle."""
-        return self.client.delete_message(
+        self.client.delete_message(
             QueueUrl=self.url,
             ReceiptHandle=receipt_handle
         )
 
-class S3Client:
-    """
-    Simple S3 uploader for raw HTML or other artifacts.
-    """
-    def __init__(self, bucket):
-        self.bucket = bucket
-        self.client = boto3.client(
-            "s3",
-            region_name="eu-north-1",
-            config=boto_config
-        )
 
-    def upload(self, key, data, content_type="text/html"):
-        """Upload a blob to S3 under the given key."""
-        return self.client.put_object(
+class S3Storage:
+    """
+    Simple S3 adapter for uploading and downloading string content.
+    """
+    def __init__(self, bucket: str):
+        self.bucket = bucket
+        self.client = boto3.client('s3', region_name=os.environ.get('AWS_REGION'))
+
+    def upload(self, key: str, content: str) -> str:
+        """Upload string content to S3 under the given key."""
+        self.client.put_object(
             Bucket=self.bucket,
             Key=key,
-            Body=data,
-            ContentType=content_type
+            Body=content.encode('utf-8')
         )
+        return key
 
-class DynamoDBAdapter:
+    def download(self, key: str) -> str:
+        """Download and return string content from S3 by key."""
+        obj = self.client.get_object(Bucket=self.bucket, Key=key)
+        return obj['Body'].read().decode('utf-8')
+
+
+class DynamoState:
     """
-    Adapter for a DynamoDB table to track URL state or heartbeats.
+    Manages URL crawl/index state in a DynamoDB table.
     """
-    def __init__(self, table_name):
-        self.table = boto3.resource(
-            "dynamodb",
-            region_name="eu-north-1"
-        ).Table(table_name)
+    def __init__(self, table_name: str):
+        self.table = boto3.resource('dynamodb', region_name=os.environ.get('AWS_REGION'))
+                          .Table(table_name)
 
-    def set_state(self, url, state, **attrs):
-        """Insert or update a URL's processing state."""
-        item = {
-            "url": url,
-            "state": state,
-            "timestamp": int(time.time())
-        }
-        item.update(attrs)
-        return self.table.put_item(Item=item)
+    def get(self, url: str) -> dict:
+        """Retrieve the item for a given URL."""
+        resp = self.table.get_item(Key={'url': url})
+        return resp.get('Item', {})
 
-    def get_stalled(self, timeout):
-        """Return a list of URLs stuck in IN_PROGRESS past the given timeout."""
-        cutoff = int(time.time()) - timeout
-        resp = self.table.scan(
-            FilterExpression=Attr("state").eq("IN_PROGRESS") &
-                             Attr("timestamp").lt(cutoff)
+    def update(self, url: str, **attrs):
+        """Set arbitrary attributes on the URL item."""
+        expr = 'SET ' + ', '.join(f"{k}=:{k}" for k in attrs)
+        vals = {f":{k}": v for k, v in attrs.items()}
+        self.table.update_item(
+            Key={'url': url},
+            UpdateExpression=expr,
+            ExpressionAttributeValues=vals
         )
-        return [i["url"] for i in resp.get("Items", [])]
 
-    def log_heartbeat(self, node_id):
-        """Log a heartbeat for the given node_id; uses HEARTBEAT_TABLE schema."""
-        return self.table.put_item(
-            Item={
-                "node_id": node_id,
-                "last_seen": int(time.time())
-            }
-        )
+    def delete(self, url: str):
+        """Delete the item for a given URL."""
+        self.table.delete_item(Key={'url': url})
+
+    def claim_crawl(self, url: str) -> bool:
+        """
+        Atomically claim a URL for crawling if not already in progress.
+        Returns True if claim succeeded.
+        """
+        now = int(time.time())
+        try:
+            self.table.update_item(
+                Key={'url': url},
+                UpdateExpression="SET crawl_status = :inprog, ts = :now, tries = if_not_exists(tries, :zero) + :one",
+                ConditionExpression="attribute_not_exists(crawl_status) OR crawl_status = :open",
+                ExpressionAttributeValues={
+                    ":inprog": "IN_PROGRESS",
+                    ":open": "OPEN",
+                    ":now": now,
+                    ":zero": 0,
+                    ":one": 1
+                }
+            )
+            return True
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                return False
+            raise
+
+    def complete_crawl(self, url: str, s3_key: str):
+        """Mark a URL as crawled, saving the S3 key and timestamp."""
+        self.update(url, crawl_status="DONE", s3_key=s3_key, ts=int(time.time()))
+
+    def claim_index(self, url: str) -> bool:
+        """
+        Atomically claim a URL for indexing if not already indexed.
+        Returns True if claim succeeded.
+        """
+        now = int(time.time())
+        try:
+            self.table.update_item(
+                Key={'url': url},
+                UpdateExpression="SET indexed = :true, idx_ts = :now",
+                ConditionExpression="attribute_not_exists(indexed) OR indexed = :false",
+                ExpressionAttributeValues={
+                    ":true": True,
+                    ":false": False,
+                    ":now": now
+                }
+            )
+            return True
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                return False
+            raise
+
+
+class HeartbeatManager:
+    """
+    Records and checks node heartbeats in a DynamoDB table.
+    """
+    def __init__(self, table_name: str, timeout: int = 10):
+        self.table = boto3.resource('dynamodb', region_name=os.environ.get('AWS_REGION'))
+                          .Table(table_name)
+        self.timeout = timeout
+
+    def update(self, node_id: str):
+        """Post a heartbeat for the given node ID."""
+        self.table.put_item(Item={'node_id': node_id, 'ts': int(time.time())})
+
+    def get_all(self) -> dict:
+        """Return a dict of {node_id: timestamp} for all heartbeats."""
+        resp = self.table.scan()
+        return {item['node_id']: item['ts'] for item in resp.get('Items', [])}
+
+    def check_dead(self) -> list:
+        """Return list of node_ids whose heartbeat is older than timeout."""
+        now = int(time.time())
+        return [n for n, ts in self.get_all().items() if now - ts > self.timeout]
