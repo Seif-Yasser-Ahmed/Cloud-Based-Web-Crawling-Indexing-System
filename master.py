@@ -47,7 +47,6 @@ def run_master(seeds):
 if __name__ == "__main__":
     # Replace these with your actual seed URLs
     seeds = [
-        "https://example.com",
-        "https://example.org"
+        "http://quotes.toscrape.com"
     ]
     run_master(seeds)
