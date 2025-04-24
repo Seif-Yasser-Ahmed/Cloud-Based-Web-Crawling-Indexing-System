@@ -4,14 +4,14 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from robotexclusionrulesparser import RobotExclusionRulesParser
-from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, MAX_CRAWL_DELAY      
+from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, MAX_CRAWL_DELAY , URL_TABLE, HEARTBEAT_TABLE     
 from aws_adapter import SqsQueue, S3Client, DynamoDBAdapter
 
 crawl_q = SqsQueue(CRAWL_QUEUE_URL)
 index_q = SqsQueue(INDEX_QUEUE_URL)
 s3     = S3Client(S3_BUCKET)
-url_db = DynamoDBAdapter("UrlStateTable")        # or use config.URL_TABLE
-hb_db  = DynamoDBAdapter("CrawlerHeartbeatTable")
+url_db = DynamoDBAdapter(URL_TABLE)        # or use config.URL_TABLE
+hb_db  = DynamoDBAdapter(HEARTBEAT_TABLE)
 
 def make_robot_checker(base_url):
     rp = RobotExclusionRulesParser()
