@@ -11,8 +11,8 @@ S3_BUCKET="crawler-bucket-group9"
 
 
 # DynamoDB tables (make sure these match your AWS setup)
-URL_TABLE          = os.getenv("URL_STATE", "UrlStateTable")
-HEARTBEAT_TABLE    = os.getenv("HEARTBEAT", "CrawlerHeartbeatTable")
+URL_TABLE          = "URL_STATE"
+HEARTBEAT_TABLE    = "HEARTBEAT"
 
 # Timing & thresholds
 MAX_CRAWL_DELAY      = float(os.getenv("MAX_CRAWL_DELAY", "5"))        # secs between fetches
