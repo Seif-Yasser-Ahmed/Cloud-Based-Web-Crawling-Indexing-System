@@ -1,74 +1,113 @@
-# crawler.py
-import time
+import os, time, json, logging
+from uuid import uuid4
+from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-from robotexclusionrulesparser import RobotExclusionRulesParser
-from config import CRAWL_QUEUE_URL, INDEX_QUEUE_URL, S3_BUCKET, MAX_CRAWL_DELAY , URL_TABLE, HEARTBEAT_TABLE     
-from aws_adapter import SqsQueue, S3Client, DynamoDBAdapter
+from aws_adapter import SqsQueue, S3Storage, DynamoState
 
-crawl_q = SqsQueue(CRAWL_QUEUE_URL)
-index_q = SqsQueue(INDEX_QUEUE_URL)
-s3     = S3Client(S3_BUCKET)
-url_db = DynamoDBAdapter(URL_TABLE)        # or use config.URL_TABLE
-hb_db  = DynamoDBAdapter(HEARTBEAT_TABLE)
+# Configure logging
+to=logging.basicConfig(level=logging.INFO, format="%(asctime)s - CRAWLER - %(levelname)s - %(message)s")
 
-def make_robot_checker(base_url):
-    rp = RobotExclusionRulesParser()
-    try:
-        rp.fetch(urljoin(base_url, "/robots.txt"))
-    except Exception:
-        return lambda _: True
-    return lambda path: rp.is_allowed("*", path)
+def crawler_worker():
+    node_id = os.environ.get('NODE_ID', f"crawler-{uuid4().hex[:6]}")
+    crawl_q = SqsQueue(os.environ['CRAWL_QUEUE_URL'])
+    index_q = SqsQueue(os.environ['INDEX_QUEUE_URL'])
+    storage = S3Storage(os.environ['S3_BUCKET'])
+    state = DynamoState(os.environ['URL_TABLE'])
 
-def crawl(worker_id):
-    robot_rules = {}
-    success, failure = 0, 0
-    print(worker_id)
+    delay = float(os.environ.get('DELAY', '1'))
+    max_retries = int(os.environ.get('MAX_RETRIES', '3'))
+    allow_ext = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
+    start_net = None
+
+    logging.info(f"{node_id} started, polling queue: {crawl_q.url}")
+
     while True:
-        msgs = crawl_q.receive()
+        # Debug: poll the crawl queue
+        print(f"DEBUG: polling crawl queue URL={crawl_q.url} for messages...")
+        msgs = crawl_q.receive(1, 20)
+        print(f"DEBUG: received messages: {msgs}")
         if not msgs:
-            time.sleep(MAX_CRAWL_DELAY)
             continue
 
-        msg = msgs[0]
-        url, rh = msg["Body"], msg["ReceiptHandle"]
+        m = msgs[0]
+        task = json.loads(m['Body'])
+        url = task.get('url')
+        depth = task.get('depth', 1)
+        rh = m['ReceiptHandle']
 
-        url_db.set_state(url, "IN_PROGRESS")
-        hb_db.log_heartbeat(worker_id)
+        if start_net is None:
+            start_net = urlparse(url).netloc
 
-        parsed = urlparse(url)
-        base = f"{parsed.scheme}://{parsed.netloc}"
-        if base not in robot_rules:
-            robot_rules[base] = make_robot_checker(base)
-
-        if not robot_rules[base](url):
+        print(f"DEBUG: attempting to claim crawl for URL={url}")
+        if not state.claim_crawl(url):
+            print(f"DEBUG: claim_crawl failed for {url}, deleting message")
             crawl_q.delete(rh)
-            url_db.set_state(url, "SKIPPED")
             continue
 
-        try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
+        item = state.get(url)
+        print(f"DEBUG: state after claim: {item}")
 
-            key = f"pages/{worker_id}/{int(time.time())}.html"
-            s3.upload(key, r.content)
+        # Politeness delay
+        print(f"DEBUG: sleeping for {delay}s before fetch")
+        time.sleep(delay)
 
-            crawl_q.delete(rh)   # delete right after successful fetch
-            url_db.set_state(url, "DONE")
+        # Fetch with retries
+        success = False
+        for attempt in range(1, max_retries + 1):
+            try:
+                print(f"DEBUG: fetching URL={url}, attempt={attempt}/{max_retries}")
+                resp = requests.get(url, headers={'User-Agent': node_id}, timeout=10)
+                resp.raise_for_status()
+                html = resp.text
+                success = True
+                print(f"DEBUG: fetch succeeded for {url}")
+                break
+            except Exception as e:
+                backoff = 2 ** (attempt - 1)
+                print(f"DEBUG: fetch error on attempt {attempt} for {url}: {e}")
+                time.sleep(backoff)
 
-            soup = BeautifulSoup(r.text, "html.parser")
-            for a in soup.find_all("a", href=True):
-                child = urljoin(url, a["href"])
-                index_q.send(child)
+        if not success:
+            print(f"DEBUG: all retries failed for {url}, marking OPEN and deleting message")
+            state.update(url, crawl_status="OPEN")
+            crawl_q.delete(rh)
+            continue
 
-            success += 1
-        except Exception as e:
-            failure += 1
-            url_db.set_state(url, "FAILED", error=str(e))
-            # leave the message in the queue for retry
+        # Upload HTML to S3
+        s3_key = f"pages/{node_id}/{uuid4().hex}.html"
+        print(f"DEBUG: uploading HTML to S3 at key={s3_key}")
+        storage.upload(s3_key, html)
+        state.complete_crawl(url, s3_key)
 
-        time.sleep(MAX_CRAWL_DELAY)
+        # Extract links
+        soup = BeautifulSoup(html, 'html.parser')
+        children = []
+        for a in soup.find_all('a', href=True):
+            full = urljoin(url, a['href'].split('#')[0])
+            p = urlparse(full)
+            if p.scheme not in ('http', 'https'):
+                continue
+            if not allow_ext and p.netloc != start_net:
+                continue
+            children.append(full)
 
-if __name__ == "__main__":
-    crawl(worker_id="crawler-1")
+        # Enqueue for indexing
+        print(f"DEBUG: sending to index queue URL={url}, s3_key={s3_key}")
+        index_q.send({'url': url, 's3_key': s3_key})
+
+        # Enqueue children for further crawling
+        if depth > 0:
+            for c in children:
+                if not state.get(c):
+                    print(f"DEBUG: enqueuing child URL={c} with depth={depth-1}")
+                    crawl_q.send({'url': c, 'depth': depth - 1})
+
+        # Delete the processed message
+        print(f"DEBUG: deleting message for URL={url}")
+        crawl_q.delete(rh)
+        logging.info(f"{node_id} crawled {url}, found {len(children)} links")
+
+
+if __name__ == '__main__':
+    crawler_worker()
