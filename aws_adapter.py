@@ -10,10 +10,16 @@ from config import (
     HEARTBEAT_TABLE
 )
 
-# Configure boto retries
-boto_config = BotoConfig(retries={"max_attempts": 5, "mode": "standard"})
+# Boto3 retry configuration
+try:
+    boto_config = BotoConfig(retries={"max_attempts": 5, "mode": "standard"})
+except Exception:
+    boto_config = None  # proceed without custom retry config
 
 class SqsQueue:
+    """
+    Wrapper around an SQS queue, resolving ARNs to URLs if needed.
+    """
     def __init__(self, identifier):
         # Initialize SQS client with explicit region
         self.client = boto3.client(
@@ -21,7 +27,7 @@ class SqsQueue:
             region_name="eu-north-1",
             config=boto_config
         )
-        # If given an ARN, resolve to a queue URL
+        # Resolve ARN to URL, or accept a direct URL
         if identifier.startswith("arn:aws:sqs"):
             parts = identifier.split(":")
             queue_name = parts[-1]
@@ -35,6 +41,7 @@ class SqsQueue:
             self.url = identifier
 
     def send(self, body, attrs=None):
+        """Send a message to the queue."""
         return self.client.send_message(
             QueueUrl=self.url,
             MessageBody=body,
@@ -42,6 +49,7 @@ class SqsQueue:
         )
 
     def receive(self, max_messages=1, wait_time=10):
+        """Receive messages from the queue."""
         resp = self.client.receive_message(
             QueueUrl=self.url,
             MaxNumberOfMessages=max_messages,
@@ -51,12 +59,16 @@ class SqsQueue:
         return resp.get("Messages", [])
 
     def delete(self, receipt_handle):
+        """Delete a message from the queue by its receipt handle."""
         return self.client.delete_message(
             QueueUrl=self.url,
             ReceiptHandle=receipt_handle
         )
 
 class S3Client:
+    """
+    Simple S3 uploader for raw HTML or other artifacts.
+    """
     def __init__(self, bucket):
         self.bucket = bucket
         self.client = boto3.client(
@@ -66,6 +78,7 @@ class S3Client:
         )
 
     def upload(self, key, data, content_type="text/html"):
+        """Upload a blob to S3 under the given key."""
         return self.client.put_object(
             Bucket=self.bucket,
             Key=key,
@@ -74,21 +87,27 @@ class S3Client:
         )
 
 class DynamoDBAdapter:
+    """
+    Adapter for a DynamoDB table to track URL state or heartbeats.
+    """
     def __init__(self, table_name):
-        # Initialize DynamoDB table resource
         self.table = boto3.resource(
             "dynamodb",
             region_name="eu-north-1"
         ).Table(table_name)
 
     def set_state(self, url, state, **attrs):
-        # Store or update URL processing state
-        item = {"url": url, "state": state, "timestamp": int(time.time())}
+        """Insert or update a URL's processing state."""
+        item = {
+            "url": url,
+            "state": state,
+            "timestamp": int(time.time())
+        }
         item.update(attrs)
         return self.table.put_item(Item=item)
 
     def get_stalled(self, timeout):
-        # Retrieve URLs stuck in IN_PROGRESS past timeout
+        """Return a list of URLs stuck in IN_PROGRESS past the given timeout."""
         cutoff = int(time.time()) - timeout
         resp = self.table.scan(
             FilterExpression=Attr("state").eq("IN_PROGRESS") &
@@ -96,12 +115,11 @@ class DynamoDBAdapter:
         )
         return [i["url"] for i in resp.get("Items", [])]
 
-    def log_heartbeat(self, worker_id):
-        # Record worker heartbeat in a separate table
-        hb_table = boto3.resource(
-            "dynamodb",
-            region_name="eu-north-1"
-        ).Table(HEARTBEAT_TABLE)
-        return hb_table.put_item(
-            Item={"worker_id": worker_id, "last_seen": int(time.time())}
+    def log_heartbeat(self, node_id):
+        """Log a heartbeat for the given node_id; uses HEARTBEAT_TABLE schema."""
+        return self.table.put_item(
+            Item={
+                "node_id": node_id,
+                "last_seen": int(time.time())
+            }
         )
