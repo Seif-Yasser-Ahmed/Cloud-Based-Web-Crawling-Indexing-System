@@ -36,3 +36,33 @@ class SqsQueue:
             QueueUrl=self.url,
             MessageBody=body
         )
+
+class S3Client:
+    def __init__(self, bucket):
+        self.bucket = bucket
+        self.client = boto3.client("s3", config=boto_config)
+
+    def upload(self, key, data, content_type="text/html"):
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
+
+
+class DynamoDBAdapter:
+    def __init__(self, table_name):
+        self.table = boto3.resource("dynamodb").Table(table_name)
+
+    def set_state(self, url, state, **attrs):
+        item = {"url": url, "state": state, "timestamp": int(time.time())}
+        item.update(attrs)
+        self.table.put_item(Item=item)
+
+    def get_stalled(self, timeout):
+        cutoff = int(time.time()) - timeout
+        resp = self.table.scan(
+            FilterExpression="state = :ip AND timestamp < :cutoff",
+            ExpressionAttributeValues={":ip": "IN_PROGRESS", ":cutoff": cutoff},
+        )
+        return [i["url"] for i in resp.get("Items", [])]
+
+    def log_heartbeat(self, worker_id):
+        hb_table = boto3.resource("dynamodb").Table(HEARTBEAT_TABLE)
+        hb_table.put_item(Item={"worker_id": worker_id, "last_seen": int(time.time())})
