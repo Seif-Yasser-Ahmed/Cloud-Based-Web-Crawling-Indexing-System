@@ -114,6 +114,5 @@ def crawler_worker():
 
         logging.info(f"{node_id} crawled {url}, found {len(children)} links")
 
-
 if __name__ == '__main__':
     crawler_worker()
