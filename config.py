@@ -5,11 +5,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # SQS
-CRAWL_QUEUE_URL    = os.getenv("CRAWL_QUEUE_URL", "arn:aws:sqs:eu-north-1:935364008195:crawlTaskQueue")
-INDEX_QUEUE_URL    = os.getenv("INDEX_QUEUE_URL", "arn:aws:sqs:eu-north-1:935364008195:indexTaskQueue")
+CRAWL_QUEUE_URL=arn:aws:sqs:eu-north-1:935364008195:crawlTaskQueue
+INDEX_QUEUE_URL=arn:aws:sqs:eu-north-1:935364008195:indexTaskQueue
+S3_BUCKET=crawler-bucket-group9
 
-# S3
-S3_BUCKET          = os.getenv("S3_BUCKET", "crawler-bucket-group9")
 
 # DynamoDB tables (make sure these match your AWS setup)
 URL_TABLE          = os.getenv("URL_STATE", "UrlStateTable")
