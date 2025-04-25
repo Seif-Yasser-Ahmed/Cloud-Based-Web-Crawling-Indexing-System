@@ -24,7 +24,7 @@ from db import get_connection
 # ─── Configuration ────────────────────────────────────────────────────────────
 CRAWL_QUEUE_URL = os.environ['CRAWL_QUEUE_URL']
 INDEX_QUEUE_URL = os.environ['INDEX_TASK_QUEUE']
-S3_BUCKET = os.environ['S3_BUCKET']
+# S3_BUCKET = os.environ['S3_BUCKET']
 
 # Thread pool / SQS
 MIN_THREADS = int(os.environ.get('MIN_THREADS', 2))
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 # ─── AWS Clients & Adapters ────────────────────────────────────────────────────
 sqs = boto3.client('sqs')
-s3 = S3Storage(S3_BUCKET)
+# s3 = S3Storage(S3_BUCKET)
 
 # robots.txt parsers per origin
 robot_parsers = {}
@@ -124,7 +124,7 @@ def crawl_task(msg):
 
         # 4) Upload HTML to S3
         key = f"pages/{job_id}/{uuid4().hex}.html"
-        s3.upload(key, html)
+        # s3.upload(key, html)
 
         # 5) Update RDS discovered_count
         conn = get_connection()
