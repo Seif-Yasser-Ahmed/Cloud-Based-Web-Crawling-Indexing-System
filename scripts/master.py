@@ -31,12 +31,12 @@ sqs = boto3.client('sqs')
 
 # Flask setup
 app = Flask(__name__)
-CORS(app)
+# Only allow requests from your S3-hosted UI origin:
+CORS(app, resources={r"/*": {"origins": "http://static-website-group9.s3-website.eu-north-1.amazonaws.com"}})
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 @app.route('/health', methods=['GET'])
 def health():
     return 'OK', 200
@@ -89,7 +89,10 @@ def get_job_status(job_id):
     """Return the current counts & status for the given job."""
     conn = get_connection()
     with conn.cursor() as cur:
-        cur.execute("SELECT * FROM jobs WHERE job_id = %s", (job_id,))
+        cur.execute("SELECT job_id AS jobId, seed_url AS seedUrl, depth_limit AS depthLimit, "
+                    "discovered_count AS discoveredCount, indexed_count AS indexedCount, "
+                    "status, created_at AS createdAt "
+                    "FROM jobs WHERE job_id = %s", (job_id,))
         row = cur.fetchone()
     conn.close()
 
@@ -108,7 +111,7 @@ def search_index():
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT page_url, frequency
+            SELECT page_url AS pageUrl, frequency
               FROM index_entries
              WHERE term = %s
              ORDER BY frequency DESC
@@ -116,12 +119,10 @@ def search_index():
         items = cur.fetchall()
     conn.close()
 
-    results = [{'pageUrl': it['page_url'], 'frequency': it['frequency']} for it in items]
-    return jsonify(results), 200
+    return jsonify(items), 200
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    # Listen on all interfaces, non-privileged port
     logger.info("Starting master on port %d", MASTER_PORT)
     app.run(host='0.0.0.0', port=MASTER_PORT, threaded=True)
