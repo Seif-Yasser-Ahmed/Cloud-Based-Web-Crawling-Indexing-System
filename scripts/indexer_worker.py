@@ -1,4 +1,3 @@
-# indexer_worker.py
 #!/usr/bin/env python3
 """
 indexer_worker.py — Multi-threaded indexer using RDS + SQS.
@@ -47,9 +46,9 @@ def index_task(msg):
     body    = json.loads(msg['Body'])
     job_id  = body['jobId']
     page_url= body['pageUrl']
-    content = body['content']
+    content = body.get('content', '')
 
-    # Heartbeat
+    # Heartbeat to keep the message invisible
     stop_event = threading.Event()
     def heartbeat():
         while not stop_event.wait(HEARTBEAT_INTERVAL):
@@ -71,24 +70,17 @@ def index_task(msg):
 
         conn = get_connection()
         with conn.cursor() as cur:
-            # Upsert into index_entries
-            cur.execute("""
-                INSERT INTO index_entries
-                  (term, job_id, page_url, page_url_hash, frequency)
-                VALUES (%s, %s, %s, %s, 1)
-                ON DUPLICATE KEY UPDATE frequency = frequency + 1
-            """, (
-                # we’ll split content to unique terms
-                None, job_id, page_url, url_hash
-            ))
-            # actually insert one row per term
-            for term in set(content.split()):
+            # Insert one row per unique, non-empty term
+            for raw_term in set(content.split()):
+                term = raw_term.strip().lower()
+                if not term:
+                    continue
                 cur.execute("""
                     INSERT INTO index_entries
                       (term, job_id, page_url, page_url_hash, frequency)
                     VALUES (%s, %s, %s, %s, 1)
                     ON DUPLICATE KEY UPDATE frequency = frequency + 1
-                """, (term.lower(), job_id, page_url, url_hash))
+                """, (term, job_id, page_url, url_hash))
 
             # Update indexed_count
             cur.execute(
@@ -96,7 +88,7 @@ def index_task(msg):
                 (job_id,)
             )
 
-        # Delete message
+        # Delete the processed message
         sqs.delete_message(
             QueueUrl=INDEX_QUEUE_URL,
             ReceiptHandle=receipt
