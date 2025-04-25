@@ -1,20 +1,18 @@
+from scripts.aws_adapter import SqsQueue, S3Storage, DynamoState
+from whoosh.writing import AsyncWriter
+from whoosh.index import create_in, open_dir, exists_in
+from whoosh.fields import Schema, ID, TEXT
+from bs4 import BeautifulSoup
+import boto3
+import io
+import tarfile
+import shutil
+import logging
+import json
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
-import os
-import json
-import logging
-import shutil
-import tarfile
-import io
-import boto3
-
-from bs4 import BeautifulSoup
-from whoosh.fields import Schema, ID, TEXT
-from whoosh.index import create_in, open_dir, exists_in
-from whoosh.writing import AsyncWriter
-
-from aws_adapter import SqsQueue, S3Storage, DynamoState
 
 # ——— Configuration & Logging ——————————————————————————————————————————————
 logging.basicConfig(
@@ -23,12 +21,12 @@ logging.basicConfig(
 )
 
 # AWS S3 backup settings
-S3_BUCKET     = os.environ["S3_BUCKET"]             # indexer-bucket-group9
-S3_PREFIX     = os.environ.get("INDEX_S3_PREFIX", "whoosh-index")
-INDEX_DIR     = os.environ.get("INDEX_DIR", "indexdir")
+S3_BUCKET = os.environ["S3_BUCKET"]             # indexer-bucket-group9
+S3_PREFIX = os.environ.get("INDEX_S3_PREFIX", "whoosh-index")
+INDEX_DIR = os.environ.get("INDEX_DIR", "indexdir")
 
 CRAWL_QUEUE_URL = os.environ["INDEX_QUEUE_URL"]
-URL_TABLE       = os.environ["URL_TABLE"]
+URL_TABLE = os.environ["URL_TABLE"]
 
 # Create S3 client using EC2 IAM role
 s3 = boto3.client("s3")
@@ -76,13 +74,16 @@ if exists_in(INDEX_DIR):
     logging.info(f"Opened existing index at '{INDEX_DIR}'")
 else:
     ix = create_in(INDEX_DIR, schema)
-    logging.info(f"Created new Whoosh index at '{INDEX_DIR}' with fields: {list(schema.names())}")
+    logging.info(
+        f"Created new Whoosh index at '{INDEX_DIR}' with fields: {list(schema.names())}")
 
 # ——— Worker Loop ——————————————————————————————————————————————————————
+
+
 def indexer_worker():
-    idx_q   = SqsQueue(CRAWL_QUEUE_URL)
+    idx_q = SqsQueue(CRAWL_QUEUE_URL)
     storage = S3Storage(S3_BUCKET)
-    state   = DynamoState(URL_TABLE)
+    state = DynamoState(URL_TABLE)
 
     logging.info(f"Indexer started; polling {idx_q.url}")
 
@@ -91,9 +92,9 @@ def indexer_worker():
         if not msgs:
             continue
 
-        m    = msgs[0]
+        m = msgs[0]
         body = m["Body"]
-        rh   = m["ReceiptHandle"]
+        rh = m["ReceiptHandle"]
 
         # 1) Parse JSON, or skip/delete bad messages
         try:
@@ -103,7 +104,7 @@ def indexer_worker():
             idx_q.delete(rh)
             continue
 
-        url    = task.get("url")
+        url = task.get("url")
         s3_key = task.get("s3_key")
         if not url or not s3_key:
             logging.error(f"Malformed task, missing url or s3_key: {task}")
@@ -117,9 +118,10 @@ def indexer_worker():
 
         # 3) Download from S3, parse, and index
         try:
-            html    = storage.download(s3_key)
-            soup    = BeautifulSoup(html, "html.parser")
-            title   = (soup.title.string or "No Title").strip() if soup.title else "No Title"
+            html = storage.download(s3_key)
+            soup = BeautifulSoup(html, "html.parser")
+            title = (soup.title.string or "No Title").strip(
+            ) if soup.title else "No Title"
             content = soup.get_text(separator=" ").strip()
 
             with AsyncWriter(ix) as writer:

@@ -4,9 +4,11 @@ import time
 import logging
 import tkinter as tk
 from tkinter import ttk, font, messagebox
-from aws_adapter import SqsQueue, HeartbeatManager
+from scripts.aws_adapter import SqsQueue, HeartbeatManager
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - GUI - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s - GUI - %(levelname)s - %(message)s")
+
 
 class SearchApp(tk.Tk):
     def __init__(self):
@@ -17,9 +19,10 @@ class SearchApp(tk.Tk):
         self.crawl_q = SqsQueue(os.environ["CRAWL_QUEUE_URL"])
         self.hb_mgr = HeartbeatManager(
             os.environ["HEARTBEAT_TABLE"],
-            timeout=int(os.environ.get("HEARTBEAT_TIMEOUT","60"))
+            timeout=int(os.environ.get("HEARTBEAT_TIMEOUT", "60"))
         )
-        self.poll_interval = int(os.environ.get("GUI_HEARTBEAT_POLL_INTERVAL","5")) * 1000
+        self.poll_interval = int(os.environ.get(
+            "GUI_HEARTBEAT_POLL_INTERVAL", "5")) * 1000
         self.after(1000, self._refresh)
 
     def _build_ui(self):
@@ -27,8 +30,10 @@ class SearchApp(tk.Tk):
         frm = tk.Frame(self)
         frm.pack(fill="x", padx=10, pady=5)
         self.url_var = tk.StringVar()
-        tk.Entry(frm, textvariable=self.url_var, font=f).pack(side="left", fill="x", expand=True)
-        ttk.Button(frm, text="Add URL", command=self._add).pack(side="left", padx=5)
+        tk.Entry(frm, textvariable=self.url_var, font=f).pack(
+            side="left", fill="x", expand=True)
+        ttk.Button(frm, text="Add URL", command=self._add).pack(
+            side="left", padx=5)
         self.status = tk.Text(self, height=15)
         self.status.pack(fill="both", expand=True, padx=10, pady=5)
 
@@ -44,11 +49,12 @@ class SearchApp(tk.Tk):
         self.status.delete("1.0", tk.END)
         hb = self.hb_mgr.get_all()
         now = int(time.time())
-        timeout = int(os.environ.get("HEARTBEAT_TIMEOUT","60"))
+        timeout = int(os.environ.get("HEARTBEAT_TIMEOUT", "60"))
         for node, ts in hb.items():
             state = "ALIVE" if (now - ts) < timeout else "DEAD"
             self.status.insert(tk.END, f"{node:20} : {state}\n")
         self.after(self.poll_interval, self._refresh)
+
 
 if __name__ == "__main__":
     SearchApp().mainloop()

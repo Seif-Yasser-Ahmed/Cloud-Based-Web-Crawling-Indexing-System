@@ -1,35 +1,35 @@
 # crawler.py
 
+from scripts.aws_adapter import SqsQueue, S3Storage, DynamoState
+from bs4 import BeautifulSoup
+import requests
+from urllib.robotparser import RobotFileParser
+from urllib.parse import urljoin, urlparse
+from uuid import uuid4
+import logging
+import json
+import time
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
-import os
-import time
-import json
-import logging
-from uuid import uuid4
-from urllib.parse import urljoin, urlparse
-from urllib.robotparser import RobotFileParser
-
-import requests
-from bs4 import BeautifulSoup
-
-from aws_adapter import SqsQueue, S3Storage, DynamoState
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - CRAWLER - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s - CRAWLER - %(levelname)s - %(message)s")
+
 
 def crawler_worker():
-    node_id    = os.environ.get('NODE_ID', f"crawler-{uuid4().hex[:6]}")
-    crawl_q    = SqsQueue(os.environ['CRAWL_QUEUE_URL'])
-    index_q    = SqsQueue(os.environ['INDEX_QUEUE_URL'])
-    storage    = S3Storage(os.environ['S3_BUCKET'])
-    state      = DynamoState(os.environ['URL_TABLE'])
+    node_id = os.environ.get('NODE_ID', f"crawler-{uuid4().hex[:6]}")
+    crawl_q = SqsQueue(os.environ['CRAWL_QUEUE_URL'])
+    index_q = SqsQueue(os.environ['INDEX_QUEUE_URL'])
+    storage = S3Storage(os.environ['S3_BUCKET'])
+    state = DynamoState(os.environ['URL_TABLE'])
 
-    delay       = float(os.environ.get('DELAY', '1'))
+    delay = float(os.environ.get('DELAY', '1'))
     max_retries = int(os.environ.get('MAX_RETRIES', '3'))
-    allow_ext   = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
-    start_net   = None
+    allow_ext = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
+    start_net = None
 
     # robots.txt parsers cache and default delay
     robot_parsers = {}
@@ -44,7 +44,7 @@ def crawler_worker():
         if not msgs:
             continue
 
-        m    = msgs[0]
+        m = msgs[0]
         body = m['Body']
         # Handle non-JSON messages gracefully
         try:
@@ -54,9 +54,9 @@ def crawler_worker():
             crawl_q.delete(m['ReceiptHandle'])
             continue
 
-        url   = task.get('url')
+        url = task.get('url')
         depth = task.get('depth', 1)
-        rh    = m['ReceiptHandle']
+        rh = m['ReceiptHandle']
 
         if start_net is None:
             start_net = urlparse(url).netloc
@@ -78,7 +78,8 @@ def crawler_worker():
             try:
                 rp.read()
             except Exception as e:
-                logging.warning(f"Could not fetch robots.txt for {origin}: {e}")
+                logging.warning(
+                    f"Could not fetch robots.txt for {origin}: {e}")
             robot_parsers[origin] = rp
         rp = robot_parsers[origin]
 
@@ -98,8 +99,10 @@ def crawler_worker():
         success = False
         for attempt in range(1, max_retries + 1):
             try:
-                print(f"DEBUG: fetch attempt {attempt}/{max_retries} for {url}")
-                resp = requests.get(url, headers={'User-Agent': node_id}, timeout=10)
+                print(
+                    f"DEBUG: fetch attempt {attempt}/{max_retries} for {url}")
+                resp = requests.get(
+                    url, headers={'User-Agent': node_id}, timeout=10)
                 resp.raise_for_status()
                 html = resp.text
                 print(f"DEBUG: fetch succeeded for {url}")
@@ -107,7 +110,8 @@ def crawler_worker():
                 break
             except Exception as e:
                 backoff = 2 ** (attempt - 1)
-                print(f"DEBUG: fetch error on attempt {attempt}: {e}; backoff {backoff}s")
+                print(
+                    f"DEBUG: fetch error on attempt {attempt}: {e}; backoff {backoff}s")
                 time.sleep(backoff)
 
         if not success:
@@ -123,11 +127,11 @@ def crawler_worker():
         state.complete_crawl(url, s3_key)
 
         # 5) Parse links
-        soup     = BeautifulSoup(html, 'html.parser')
+        soup = BeautifulSoup(html, 'html.parser')
         children = []
         for a in soup.find_all('a', href=True):
             full = urljoin(url, a['href'].split('#')[0])
-            p    = urlparse(full)
+            p = urlparse(full)
             if p.scheme not in ('http', 'https'):
                 continue
             if not allow_ext and p.netloc != start_net:
