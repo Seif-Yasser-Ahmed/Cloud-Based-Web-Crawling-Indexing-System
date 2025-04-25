@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-crawler_worker.py — Multi-threaded Crawler Worker
+crawler_worker.py — Multi-threaded Crawler Worker with SQS visibility-heartbeat
+and optional manual thread-count override.
 
 Continuously polls the crawlTaskQueue SQS queue, spawns threads to fetch pages,
-extract links, enqueue new crawl tasks and indexing tasks, and updates job progress.
-Scales its thread pool based on queue backlog.
+extract links, enqueue new crawl & index tasks, and updates job progress.
+Scales its thread pool based on queue backlog unless THREAD_COUNT is set.
+Uses a background heartbeat per message to extend SQS visibility timeout.
 """
 
 import os
 import json
 import time
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlparse
 
@@ -23,11 +26,19 @@ CRAWL_QUEUE_URL   = os.environ['CRAWL_QUEUE_URL']
 INDEX_QUEUE_URL   = os.environ['INDEX_TASK_QUEUE']
 JOBS_TABLE_NAME   = os.environ.get('JOBS_TABLE_NAME', 'Jobs')
 
+# Thread scaling parameters
 MIN_THREADS       = int(os.environ.get('MIN_THREADS', 2))
 MAX_THREADS       = int(os.environ.get('MAX_THREADS', 20))
 SCALE_INTERVAL    = int(os.environ.get('SCALE_INTERVAL_SEC', 30))
+
+# SQS receive / visibility
 MSG_BATCH_SIZE    = int(os.environ.get('MSG_BATCH_SIZE', 5))
 POLL_WAIT_TIME    = int(os.environ.get('POLL_WAIT_TIME_SEC', 20))
+VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', 120))
+HEARTBEAT_INTERVAL = int(os.environ.get('HEARTBEAT_INTERVAL_SEC', VISIBILITY_TIMEOUT // 2))
+
+# Manual override: if set, disables auto-scaling
+THREAD_COUNT = os.environ.get('THREAD_COUNT')
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -41,28 +52,47 @@ sqs       = boto3.client('sqs')
 dynamodb  = boto3.resource('dynamodb')
 jobs_tbl  = dynamodb.Table(JOBS_TABLE_NAME)
 
+
 def crawl_task(msg):
     """
     Process a single crawl message:
-    - Fetch the URL
-    - Extract text and same-domain links
-    - Enqueue new crawl tasks (if depth < limit)
-    - Enqueue indexing task
+    - Start a heartbeat thread to extend visibility
+    - Fetch the URL, parse HTML, extract links
+    - Enqueue new crawl tasks & indexing tasks
     - Update discoveredCount in DynamoDB
-    - Delete the message from the queue
+    - Clean up heartbeat and delete message
     """
-    try:
-        body   = json.loads(msg['Body'])
-        job_id = body['jobId']
-        url    = body['url']
-        depth  = int(body.get('depth', 0))
+    receipt = msg['ReceiptHandle']
+    body    = json.loads(msg['Body'])
+    job_id  = body['jobId']
+    url     = body['url']
+    depth   = int(body.get('depth', 0))
 
+    # Heartbeat mechanism to extend visibility timeout
+    stop_event = threading.Event()
+
+    def heartbeat():
+        while not stop_event.wait(HEARTBEAT_INTERVAL):
+            try:
+                sqs.change_message_visibility(
+                    QueueUrl=CRAWL_QUEUE_URL,
+                    ReceiptHandle=receipt,
+                    VisibilityTimeout=VISIBILITY_TIMEOUT
+                )
+                logger.debug("Extended visibility for msg %s", receipt)
+            except Exception:
+                logger.exception("Heartbeat failure for msg %s", receipt)
+
+    hb_thread = threading.Thread(target=heartbeat, daemon=True)
+    hb_thread.start()
+
+    try:
         # Fetch page
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         html = resp.text
 
-        # Parse HTML
+        # Parse HTML and extract text
         soup = BeautifulSoup(html, 'html.parser')
         text = soup.get_text()
 
@@ -73,15 +103,16 @@ def crawl_task(msg):
             ExpressionAttributeValues={':inc': 1}
         )
 
-        # Enqueue discovered links (same-domain, within depth limit)
+        # Retrieve job item for depthLimit and seed domain
         job_item = jobs_tbl.get_item(Key={'jobId': job_id}).get('Item', {})
         depth_limit = job_item.get('depthLimit', 2)
-        base_netloc = urlparse(job_item.get('seedUrl', '')).netloc
+        seed_netloc = urlparse(job_item.get('seedUrl', '')).netloc
 
+        # Enqueue discovered same-domain links
         if depth < depth_limit:
             for link in soup.find_all('a', href=True):
                 abs_url = urljoin(url, link['href'])
-                if urlparse(abs_url).netloc != base_netloc:
+                if urlparse(abs_url).netloc != seed_netloc:
                     continue
                 sqs.send_message(
                     QueueUrl=CRAWL_QUEUE_URL,
@@ -105,19 +136,24 @@ def crawl_task(msg):
         # Delete the processed message
         sqs.delete_message(
             QueueUrl=CRAWL_QUEUE_URL,
-            ReceiptHandle=msg['ReceiptHandle']
+            ReceiptHandle=receipt
         )
 
         logger.info("Crawled %s (depth %d) for job %s", url, depth, job_id)
 
     except Exception:
-        logger.exception("Failed processing crawl message: %s", msg.get('MessageId'))
+        logger.exception("Error processing crawl msg %s", receipt)
+
+    finally:
+        # Stop and clean up heartbeat
+        stop_event.set()
+        hb_thread.join(timeout=0)
 
 
 def adjust_threads(executor):
     """
-    Resize the ThreadPoolExecutor based on the number of visible messages.
-    Target roughly 1 thread per 5 messages, bounded by MIN_THREADS and MAX_THREADS.
+    Auto-scale threads based on queue backlog:
+    ~1 thread per 5 messages, bounded by MIN_THREADS and MAX_THREADS.
     """
     try:
         attrs   = sqs.get_queue_attributes(
@@ -133,28 +169,36 @@ def adjust_threads(executor):
             executor._max_workers = target
 
     except Exception:
-        logger.exception("Error adjusting crawler thread pool size")
+        logger.exception("Failed to adjust thread pool size")
 
 
 def main():
-    executor = ThreadPoolExecutor(max_workers=MIN_THREADS)
-    logger.info("Starting crawler worker (threads=%d–%d)", MIN_THREADS, MAX_THREADS)
+    # Determine initial pool size
+    if THREAD_COUNT:
+        pool_size  = int(THREAD_COUNT)
+        auto_scale = False
+    else:
+        pool_size  = MIN_THREADS
+        auto_scale = True
+
+    executor = ThreadPoolExecutor(max_workers=pool_size)
+    logger.info("Starting crawler worker with %d threads (auto-scale=%s)",
+                pool_size, auto_scale)
 
     while True:
-        # Long-poll for up to MSG_BATCH_SIZE messages
+        # Long-poll for messages
         resp = sqs.receive_message(
             QueueUrl=CRAWL_QUEUE_URL,
             MaxNumberOfMessages=MSG_BATCH_SIZE,
             WaitTimeSeconds=POLL_WAIT_TIME
         )
-        msgs = resp.get('Messages', [])
-        for msg in msgs:
+        for msg in resp.get('Messages', []):
             executor.submit(crawl_task, msg)
 
-        # Adjust threads based on queue depth
-        adjust_threads(executor)
+        # Auto-adjust thread pool if enabled
+        if auto_scale:
+            adjust_threads(executor)
 
-        # Sleep before next scale check
         time.sleep(SCALE_INTERVAL)
 
 
