@@ -18,7 +18,7 @@ import boto3
 import requests
 from bs4 import BeautifulSoup
 
-from scripts.aws_adapter import S3Storage
+from aws_adapter import S3Storage
 from db import get_connection
 
 # ─── Configuration ────────────────────────────────────────────────────────────
