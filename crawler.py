@@ -1,3 +1,5 @@
+# crawler.py
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -7,6 +9,7 @@ import json
 import logging
 from uuid import uuid4
 from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -27,6 +30,9 @@ def crawler_worker():
     max_retries = int(os.environ.get('MAX_RETRIES', '3'))
     allow_ext   = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
     start_net   = None
+
+    # robots.txt parsers cache and default delay
+    robot_parsers = {}
 
     logging.info(f"{node_id} started; polling {crawl_q.url}")
 
@@ -64,11 +70,31 @@ def crawler_worker():
 
         print(f"DEBUG: state after claim: {state.get(url)}")
 
-        # 3) Politeness delay
-        print(f"DEBUG: sleeping for {delay}s before fetch")
-        time.sleep(delay)
+        # ---- robots.txt compliance ----
+        origin = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+        if origin not in robot_parsers:
+            rp = RobotFileParser()
+            rp.set_url(origin + "/robots.txt")
+            try:
+                rp.read()
+            except Exception as e:
+                logging.warning(f"Could not fetch robots.txt for {origin}: {e}")
+            robot_parsers[origin] = rp
+        rp = robot_parsers[origin]
 
-        # 4) Fetch with retries
+        if not rp.can_fetch(node_id, url):
+            logging.info(f"Skipping disallowed by robots.txt → {url}")
+            state.update(url, crawl_status="SKIPPED_ROBOT")
+            crawl_q.delete(rh)
+            continue
+
+        rd = rp.crawl_delay(node_id)
+        wait = rd if (rd is not None) else delay
+        print(f"DEBUG: sleeping for {wait}s before fetch (robots.txt)")
+        time.sleep(wait)
+        # ---- end robots logic ----
+
+        # 3) Fetch with retries
         success = False
         for attempt in range(1, max_retries + 1):
             try:
@@ -90,13 +116,13 @@ def crawler_worker():
             crawl_q.delete(rh)
             continue
 
-        # 5) Upload to S3
+        # 4) Upload to S3
         s3_key = f"pages/{node_id}/{uuid4().hex}.html"
         print(f"DEBUG: uploading HTML to S3 at key={s3_key}")
         storage.upload(s3_key, html)
         state.complete_crawl(url, s3_key)
 
-        # 6) Parse links
+        # 5) Parse links
         soup     = BeautifulSoup(html, 'html.parser')
         children = []
         for a in soup.find_all('a', href=True):
@@ -108,17 +134,17 @@ def crawler_worker():
                 continue
             children.append(full)
 
-        # 7) Enqueue for indexing
+        # 6) Enqueue for indexing
         print(f"DEBUG: sending to index queue → url={url}, s3_key={s3_key}")
         index_q.send({'url': url, 's3_key': s3_key})
 
-        # 8) Enqueue children for further crawling
+        # 7) Enqueue children for further crawling
         if depth > 0:
             for c in children:
                 print(f"DEBUG: enqueuing child → url={c}, depth={depth-1}")
                 crawl_q.send({'url': c, 'depth': depth - 1})
 
-        # 9) Delete processed message
+        # 8) Delete processed message
         print(f"DEBUG: deleting message for {url}")
         crawl_q.delete(rh)
 
