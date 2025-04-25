@@ -1,14 +1,17 @@
 from dotenv import load_dotenv
 load_dotenv()
+
 import os
 import json
 import logging
 import shutil
-import time
+import tarfile
+import io
+import boto3
 
 from bs4 import BeautifulSoup
 from whoosh.fields import Schema, ID, TEXT
-from whoosh.index import create_in
+from whoosh.index import create_in, open_dir, exists_in
 from whoosh.writing import AsyncWriter
 
 from aws_adapter import SqsQueue, S3Storage, DynamoState
@@ -19,24 +22,61 @@ logging.basicConfig(
     format="%(asctime)s - INDEXER - %(levelname)s - %(message)s"
 )
 
+# AWS S3 backup settings
+S3_BUCKET     = os.environ["S3_BUCKET"]             # indexer-bucket-group9
+S3_PREFIX     = os.environ.get("INDEX_S3_PREFIX", "whoosh-index")
+INDEX_DIR     = os.environ.get("INDEX_DIR", "indexdir")
+
 CRAWL_QUEUE_URL = os.environ["INDEX_QUEUE_URL"]
-S3_BUCKET        = os.environ["S3_BUCKET"]
-URL_TABLE        = os.environ["URL_TABLE"]
-INDEX_DIR        = os.environ.get("INDEX_DIR", "indexdir")
+URL_TABLE       = os.environ["URL_TABLE"]
 
-# ——— (Re)build the Whoosh index so it has a `title` field —————————————————————————
-if os.path.exists(INDEX_DIR):
-    logging.info(f"Removing existing index directory `{INDEX_DIR}` to rebuild schema")
-    shutil.rmtree(INDEX_DIR)
+# Create S3 client using EC2 IAM role
+s3 = boto3.client("s3")
+
+
+def restore_index_from_s3():
+    """Download and extract index archive from S3 if it exists."""
+    key = f"{S3_PREFIX}/index.tar.gz"
+    try:
+        obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
+    except s3.exceptions.NoSuchKey:
+        logging.info("No existing index backup found in S3; starting fresh.")
+        return
+    buf = io.BytesIO(obj['Body'].read())
+    with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+        tar.extractall(path=INDEX_DIR)
+    logging.info(f"Restored index from s3://{S3_BUCKET}/{key}")
+
+
+def backup_index_to_s3():
+    """Archive INDEX_DIR and upload to S3 backup bucket."""
+    key = f"{S3_PREFIX}/index.tar.gz"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.add(INDEX_DIR, arcname=os.path.basename(INDEX_DIR))
+    buf.seek(0)
+    s3.put_object(Bucket=S3_BUCKET, Key=key, Body=buf.getvalue())
+    logging.info(f"Backed up index to s3://{S3_BUCKET}/{key}")
+
+
+# ——— Prepare/Restore Whoosh Index ————————————————————————————————————————
+# Ensure index directory exists
 os.makedirs(INDEX_DIR, exist_ok=True)
+# Restore from S3 if present
+restore_index_from_s3()
 
+# Open existing or create new Whoosh index with desired schema
 schema = Schema(
     url=ID(stored=True, unique=True),
     title=TEXT(stored=True),
     content=TEXT
 )
-ix = create_in(INDEX_DIR, schema)
-logging.info(f"Created new Whoosh index at `{INDEX_DIR}` with fields: {list(schema.names())}")
+if exists_in(INDEX_DIR):
+    ix = open_dir(INDEX_DIR)
+    logging.info(f"Opened existing index at '{INDEX_DIR}'")
+else:
+    ix = create_in(INDEX_DIR, schema)
+    logging.info(f"Created new Whoosh index at '{INDEX_DIR}' with fields: {list(schema.names())}")
 
 # ——— Worker Loop ——————————————————————————————————————————————————————
 def indexer_worker():
@@ -51,7 +91,7 @@ def indexer_worker():
         if not msgs:
             continue
 
-        m = msgs[0]
+        m    = msgs[0]
         body = m["Body"]
         rh   = m["ReceiptHandle"]
 
@@ -77,20 +117,23 @@ def indexer_worker():
 
         # 3) Download from S3, parse, and index
         try:
-            html = storage.download(s3_key)
-            soup = BeautifulSoup(html, "html.parser")
+            html    = storage.download(s3_key)
+            soup    = BeautifulSoup(html, "html.parser")
             title   = (soup.title.string or "No Title").strip() if soup.title else "No Title"
             content = soup.get_text(separator=" ").strip()
 
             with AsyncWriter(ix) as writer:
                 writer.update_document(url=url, title=title, content=content)
-
             logging.info(f"Indexed {url}")
+            # 4) After commit, back up entire index to S3
+            backup_index_to_s3()
+
         except Exception as e:
             logging.error(f"Error indexing {url}: {e}", exc_info=True)
         finally:
-            # 4) Delete the SQS message in all cases
+            # 5) Delete the SQS message in all cases
             idx_q.delete(rh)
+
 
 if __name__ == "__main__":
     indexer_worker()
