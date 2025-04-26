@@ -1,0 +1,9 @@
+boto3
+python-dotenv
+requests
+beautifulsoup4
+robotexclusionrulesparser
+whoosh
+PyMySQL
+Flask
+flask-cors

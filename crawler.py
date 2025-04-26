@@ -1,84 +1,159 @@
-import os
-import time
-import threading
-import urllib.parse
-import requests
-import logging
+# crawler.py
 
-from urllib.robotparser import RobotFileParser
-from urllib.error import URLError, HTTPError
+from scripts.aws_adapter import SqsQueue, S3Storage, DynamoState
 from bs4 import BeautifulSoup
+import requests
+from urllib.robotparser import RobotFileParser
+from urllib.parse import urljoin, urlparse
+from uuid import uuid4
+import logging
+import json
+import time
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
 
-class WebCrawler:
-    def __init__(self, *, delay=1, allow_external=False, node_id="Node", user_agent="MyCrawler"):
-        self.delay = delay
-        self.allow_external = allow_external
-        self.node_id = node_id
-        self.user_agent = user_agent
-        self.robots_parsers = {}
-        self.output_dir = "crawled_pages"
-        os.makedirs(self.output_dir, exist_ok=True)
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s - CRAWLER - %(levelname)s - %(message)s")
 
-    def can_fetch(self, url):
-        parsed = urllib.parse.urlparse(url)
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-        if base_url not in self.robots_parsers:
+def crawler_worker():
+    node_id = os.environ.get('NODE_ID', f"crawler-{uuid4().hex[:6]}")
+    crawl_q = SqsQueue(os.environ['CRAWL_QUEUE_URL'])
+    index_q = SqsQueue(os.environ['INDEX_QUEUE_URL'])
+    storage = S3Storage(os.environ['S3_BUCKET'])
+    state = DynamoState(os.environ['URL_TABLE'])
+
+    delay = float(os.environ.get('DELAY', '1'))
+    max_retries = int(os.environ.get('MAX_RETRIES', '3'))
+    allow_ext = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
+    start_net = None
+
+    # robots.txt parsers cache and default delay
+    robot_parsers = {}
+
+    logging.info(f"{node_id} started; polling {crawl_q.url}")
+
+    while True:
+        # 1) Poll crawl queue
+        print(f"DEBUG: polling crawl queue → {crawl_q.url}")
+        msgs = crawl_q.receive(1, 20)
+        print(f"DEBUG: received messages: {msgs}")
+        if not msgs:
+            continue
+
+        m = msgs[0]
+        body = m['Body']
+        # Handle non-JSON messages gracefully
+        try:
+            task = json.loads(body)
+        except json.JSONDecodeError:
+            print(f"DEBUG: skipping non-JSON message body: {body!r}")
+            crawl_q.delete(m['ReceiptHandle'])
+            continue
+
+        url = task.get('url')
+        depth = task.get('depth', 1)
+        rh = m['ReceiptHandle']
+
+        if start_net is None:
+            start_net = urlparse(url).netloc
+
+        # 2) Claim in Dynamo
+        print(f"DEBUG: attempting claim_crawl for {url}")
+        if not state.claim_crawl(url):
+            print(f"DEBUG: claim_crawl failed, deleting message")
+            crawl_q.delete(rh)
+            continue
+
+        print(f"DEBUG: state after claim: {state.get(url)}")
+
+        # ---- robots.txt compliance ----
+        origin = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+        if origin not in robot_parsers:
             rp = RobotFileParser()
-            robots_url = urllib.parse.urljoin(base_url, "/robots.txt")
-            rp.set_url(robots_url)
+            rp.set_url(origin + "/robots.txt")
             try:
                 rp.read()
             except Exception as e:
-                logging.warning(f"[{self.node_id}] robots.txt error for {robots_url}: {e}")
-                rp = None
-            self.robots_parsers[base_url] = rp
+                logging.warning(
+                    f"Could not fetch robots.txt for {origin}: {e}")
+            robot_parsers[origin] = rp
+        rp = robot_parsers[origin]
 
-        rp = self.robots_parsers[base_url]
-        return True if rp is None else rp.can_fetch(self.user_agent, url)
+        if not rp.can_fetch(node_id, url):
+            logging.info(f"Skipping disallowed by robots.txt → {url}")
+            state.update(url, crawl_status="SKIPPED_ROBOT")
+            crawl_q.delete(rh)
+            continue
 
-    def process_url(self, url, starting_url, depth, url_map):
-        if not self.can_fetch(url):
-            logging.info(f"[{self.node_id}] Blocked by robots.txt: {url}")
-            return None
+        rd = rp.crawl_delay(node_id)
+        wait = rd if (rd is not None) else delay
+        print(f"DEBUG: sleeping for {wait}s before fetch (robots.txt)")
+        time.sleep(wait)
+        # ---- end robots logic ----
 
-        time.sleep(self.delay)
-        headers = {"User-Agent": self.user_agent}
-        max_retries = 3
+        # 3) Fetch with retries
+        success = False
         for attempt in range(1, max_retries + 1):
             try:
-                resp = requests.get(url, headers=headers, timeout=10)
+                print(
+                    f"DEBUG: fetch attempt {attempt}/{max_retries} for {url}")
+                resp = requests.get(
+                    url, headers={'User-Agent': node_id}, timeout=10)
                 resp.raise_for_status()
                 html = resp.text
+                print(f"DEBUG: fetch succeeded for {url}")
+                success = True
                 break
             except Exception as e:
-                wait = 2 ** (attempt - 1)
-                logging.warning(f"[{self.node_id}] Retry {attempt}/{max_retries} for {url} in {wait}s due to: {e}")
-                time.sleep(wait)
-        else:
-            logging.error(f"[{self.node_id}] Failed to fetch after {max_retries} attempts: {url}")
-            return []
+                backoff = 2 ** (attempt - 1)
+                print(
+                    f"DEBUG: fetch error on attempt {attempt}: {e}; backoff {backoff}s")
+                time.sleep(backoff)
 
-        ts = int(time.time() * 1000)
-        tid = threading.get_ident()
-        filename = f"{self.node_id}_{tid}_{ts}.html"
-        path = os.path.join(self.output_dir, filename)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(html)
+        if not success:
+            print(f"DEBUG: all retries failed; marking OPEN and deleting message")
+            state.update(url, crawl_status="OPEN")
+            crawl_q.delete(rh)
+            continue
 
-        url_map[url] = path
+        # 4) Upload to S3
+        s3_key = f"pages/{node_id}/{uuid4().hex}.html"
+        print(f"DEBUG: uploading HTML to S3 at key={s3_key}")
+        storage.upload(s3_key, html)
+        state.complete_crawl(url, s3_key)
 
-        soup = BeautifulSoup(html, "html.parser")
-        links = []
-        for a in soup.find_all("a", href=True):
-            href = a["href"].strip()
-            full = urllib.parse.urljoin(url, href).split("#")[0]
-            if not full.lower().startswith(("http://", "https://")):
+        # 5) Parse links
+        soup = BeautifulSoup(html, 'html.parser')
+        children = []
+        for a in soup.find_all('a', href=True):
+            full = urljoin(url, a['href'].split('#')[0])
+            p = urlparse(full)
+            if p.scheme not in ('http', 'https'):
                 continue
-            if not self.allow_external and urllib.parse.urlparse(full).netloc != urllib.parse.urlparse(starting_url).netloc:
+            if not allow_ext and p.netloc != start_net:
                 continue
-            links.append(full)
+            children.append(full)
 
-        return links
+        # 6) Enqueue for indexing
+        print(f"DEBUG: sending to index queue → url={url}, s3_key={s3_key}")
+        index_q.send({'url': url, 's3_key': s3_key})
+
+        # 7) Enqueue children for further crawling
+        if depth > 0:
+            for c in children:
+                print(f"DEBUG: enqueuing child → url={c}, depth={depth-1}")
+                crawl_q.send({'url': c, 'depth': depth - 1})
+
+        # 8) Delete processed message
+        print(f"DEBUG: deleting message for {url}")
+        crawl_q.delete(rh)
+
+        logging.info(f"{node_id} crawled {url}, found {len(children)} links")
+
+
+if __name__ == '__main__':
+    crawler_worker()
