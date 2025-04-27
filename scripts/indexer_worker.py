@@ -23,9 +23,9 @@ MIN_THREADS        = int(os.environ.get('MIN_THREADS', 2))
 MAX_THREADS        = int(os.environ.get('MAX_THREADS', 20))
 SCALE_INTERVAL     = int(os.environ.get('SCALE_INTERVAL_SEC', 30))
 
-MSG_BATCH_SIZE     = int(os.environ.get('MSG_BATCH_SIZE', 5))
+MSG_BATCH_SIZE     = int(os.environ.get('MSG_BATCH_SIZE', 10))
 POLL_WAIT_TIME     = int(os.environ.get('POLL_WAIT_TIME_SEC', 20))
-VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', 120))
+VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', 30))
 HEARTBEAT_INTERVAL = int(os.environ.get('HEARTBEAT_INTERVAL_SEC', VISIBILITY_TIMEOUT // 2))
 
 THREAD_COUNT = os.environ.get('THREAD_COUNT')
@@ -70,18 +70,21 @@ def index_task(msg):
 
         conn = get_connection()
         with conn.cursor() as cur:
+            terms_data = []
             # Insert one row per unique, non-empty term
             for raw_term in set(content.split()):
                 term = raw_term.strip().lower()
                 if not term:
                     continue
+                terms_data.append((term, job_id, page_url, url_hash, 1))
+            if terms_data:
                 cur.execute("""
                     INSERT INTO index_entries
                       (term, job_id, page_url, page_url_hash, frequency)
                     VALUES (%s, %s, %s, %s, 1)
                     ON DUPLICATE KEY UPDATE frequency = frequency + 1
-                """, (term, job_id, page_url, url_hash))
-
+                # """, terms_data)
+                # (term, job_id, page_url, url_hash)
             # Update indexed_count
             cur.execute(
                 "UPDATE jobs SET indexed_count = indexed_count + 1 WHERE job_id = %s",
