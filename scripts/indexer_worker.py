@@ -19,11 +19,11 @@ from db import get_connection
 # ─── Configuration ────────────────────────────────────────────────────────────
 INDEX_QUEUE_URL    = os.environ['INDEX_TASK_QUEUE']
 
-MIN_THREADS        = int(os.environ.get('MIN_THREADS', 2))
+MIN_THREADS        = int(os.environ.get('MIN_THREADS', 4))
 MAX_THREADS        = int(os.environ.get('MAX_THREADS', 20))
-SCALE_INTERVAL     = int(os.environ.get('SCALE_INTERVAL_SEC', 30))
+SCALE_INTERVAL     = int(os.environ.get('SCALE_INTERVAL_SEC', 15))
 
-MSG_BATCH_SIZE     = int(os.environ.get('MSG_BATCH_SIZE', 10))
+MSG_BATCH_SIZE     = int(os.environ.get('MSG_BATCH_SIZE', 15))
 POLL_WAIT_TIME     = int(os.environ.get('POLL_WAIT_TIME_SEC', 20))
 VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', 30))
 HEARTBEAT_INTERVAL = int(os.environ.get('HEARTBEAT_INTERVAL_SEC', VISIBILITY_TIMEOUT // 2))
