@@ -79,7 +79,7 @@ def index_task(msg):
                     continue
                 terms_data.append((term, job_id, page_url, url_hash, 1))
             if terms_data:
-                cur.execute("""
+                cur.executemany("""
                     INSERT INTO index_entries
                       (term, job_id, page_url, page_url_hash, frequency)
                     VALUES (%s, %s, %s, %s, 1)
