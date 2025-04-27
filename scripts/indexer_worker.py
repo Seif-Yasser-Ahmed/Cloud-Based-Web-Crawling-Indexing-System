@@ -70,6 +70,7 @@ def index_task(msg):
 
         conn = get_connection()
         with conn.cursor() as cur:
+            #store 
             terms_data = []
             # Insert one row per unique, non-empty term
             for raw_term in set(content.split()):
