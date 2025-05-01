@@ -38,14 +38,17 @@ DEFAULT_DELAY       = float(os.environ.get('DELAY', '1'))
 MAX_RETRIES         = int(os.environ.get('MAX_RETRIES', '3'))
 ALLOW_EXTERNAL      = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
 S3_BUCKET           = os.environ.get('S3_BUCKET')
-HEARTBEAT_TABLE = 'heartbeats'
-
+HEARTBEAT_TABLE     = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Logging
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='[CRAWLER] %(asctime)s %(levelname)s %(message)s')
-logger = logging.getLogger("crawler")
+# Silence verbose AWS logs
+logging.getLogger('botocore').setLevel(logging.WARNING)
+logging.getLogger('boto3').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logger = logging.getLogger("crawler_worker")
 
 # AWS clients
 sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
@@ -133,9 +136,12 @@ def crawl_task(msg):
         origin = f"{parsed.scheme}://{parsed.netloc}"
         rp = robot_parsers.get(origin)
         if rp is None:
-            rp = RobotFileParser(); rp.set_url(origin + "/robots.txt")
-            try: rp.read()
-            except Exception: logger.warning("Could not fetch robots.txt for %s", origin)
+            rp = RobotFileParser()
+            rp.set_url(origin + "/robots.txt")
+            try:
+                rp.read()
+            except Exception:
+                logger.warning("Could not fetch robots.txt for %s", origin)
             robot_parsers[origin] = rp
         if rp and not rp.can_fetch("*", url):
             logger.info("Blocked by robots.txt: %s", url)
