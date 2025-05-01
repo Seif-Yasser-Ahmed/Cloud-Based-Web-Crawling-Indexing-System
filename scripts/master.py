@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """
-master.py — Flask API for distributed crawler/indexer using RDS + SQS,
-with unified heartbeats table and monitoring of threads, queues, and node health.
+master.py — Flask API for distributed crawler/indexer with unified thread-level heartbeats.
 """
 
-import os
-import json
-import uuid
-import logging
-import time
+import os, time, uuid, logging
 from datetime import datetime, timezone
 
 from flask import Flask, request, jsonify
@@ -17,8 +12,7 @@ import boto3
 
 from db import get_connection
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Configuration via environment variables
+# ────────────────────────────────────────────────────────────────────────────────
 CRAWL_QUEUE_URL      = os.environ['CRAWL_QUEUE_URL']
 INDEX_QUEUE_URL      = os.environ['INDEX_TASK_QUEUE']
 MASTER_PORT          = int(os.environ.get('MASTER_PORT', 5000))
@@ -31,14 +25,10 @@ CRAWLER_THREAD_COUNT = int(os.environ.get('CRAWLER_THREAD_COUNT',
 INDEXER_THREAD_COUNT = int(os.environ.get('INDEXER_THREAD_COUNT',
                              os.environ.get('THREAD_COUNT', '10')))
 
-# AWS SQS client
 sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 
-# Flask setup
 app = Flask(__name__)
-CORS(app)  # adjust CORS origins if needed
-
-# Logging
+CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MASTER")
 
@@ -50,8 +40,7 @@ def health():
 
 @app.route('/jobs', methods=['POST'])
 def start_job():
-    """Kick off a new crawl job by enqueuing the seed URL."""
-    data = request.get_json(force=True)
+    data     = request.get_json(force=True)
     seed_url = data.get('seedUrl')
     if not seed_url:
         return jsonify({'error': 'Missing seedUrl'}), 400
@@ -63,19 +52,16 @@ def start_job():
     depth_limit = max(1, min(depth_limit, 5))
 
     job_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    now    = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
-    # Insert into jobs table
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO jobs
-              (job_id, seed_url, depth_limit, created_at)
+            INSERT INTO jobs (job_id, seed_url, depth_limit, created_at)
             VALUES (%s, %s, %s, %s)
         """, (job_id, seed_url, depth_limit, now))
     conn.close()
 
-    # Enqueue initial crawl message
     sqs.send_message(
         QueueUrl=CRAWL_QUEUE_URL,
         MessageBody=json.dumps({'jobId': job_id, 'url': seed_url, 'depth': 0})
@@ -87,7 +73,6 @@ def start_job():
 
 @app.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
-    """Return current counts and status for the given job."""
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -112,7 +97,6 @@ def get_job_status(job_id):
 
 @app.route('/search', methods=['GET'])
 def search_index():
-    """Search indexed pages by term (simple term-frequency lookup)."""
     term = request.args.get('query', '').strip().lower()
     if not term:
         return jsonify([]), 200
@@ -133,57 +117,42 @@ def search_index():
 
 @app.route('/status', methods=['GET'])
 def status():
-    """
-    Return monitoring data:
-      - crawlers: { node_id: 'alive'|'dead', ... }
-      - indexers: { node_id: 'alive'|'dead', ... }
-      - queues:
-          crawl:   { visible: N, inFlight: M }
-          index:   { visible: A, inFlight: B }
-      - threads: { crawler: CRAWLER_THREAD_COUNT, indexer: INDEXER_THREAD_COUNT }
-    """
     now = time.time()
 
-    # 1) Fetch heartbeats from unified table
+    # 1) Heartbeats
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(f"""
             SELECT node_id, role, UNIX_TIMESTAMP(last_heartbeat) AS ts
               FROM {HEARTBEAT_TABLE}
         """)
-        hb_rows = cur.fetchall()
+        rows = cur.fetchall()
     conn.close()
 
     crawlers = {}
     indexers = {}
-    for row in hb_rows:
-        node_id = row['node_id']
-        role    = row['role']
-        # ts comes back as a string; convert to float
-        ts_val  = float(row['ts'])
-        alive   = (now - ts_val) < HEARTBEAT_TIMEOUT
-
-        if role == 'crawler':
-            crawlers[node_id] = 'alive' if alive else 'dead'
+    for r in rows:
+        ts = float(r['ts'])
+        alive = (now - ts) < HEARTBEAT_TIMEOUT
+        if r['role'] == 'crawler':
+            crawlers[r['node_id']] = 'alive' if alive else 'dead'
         else:
-            indexers[node_id] = 'alive' if alive else 'dead'
+            indexers[r['node_id']] = 'alive' if alive else 'dead'
 
-    # 2) Fetch SQS queue depths
-    def queue_stats(url):
-        attrs = sqs.get_queue_attributes(
+    # 2) Queue depths
+    def stats(url):
+        a = sqs.get_queue_attributes(
             QueueUrl=url,
-            AttributeNames=['ApproximateNumberOfMessages',
-                            'ApproximateNumberOfMessagesNotVisible']
+            AttributeNames=[
+                'ApproximateNumberOfMessages',
+                'ApproximateNumberOfMessagesNotVisible'
+            ]
         )['Attributes']
         return {
-            'visible':  int(attrs.get('ApproximateNumberOfMessages', 0)),
-            'inFlight': int(attrs.get('ApproximateNumberOfMessagesNotVisible', 0))
+            'visible':  int(a.get('ApproximateNumberOfMessages', 0)),
+            'inFlight': int(a.get('ApproximateNumberOfMessagesNotVisible', 0))
         }
-
-    queues = {
-        'crawl': queue_stats(CRAWL_QUEUE_URL),
-        'index': queue_stats(INDEX_QUEUE_URL)
-    }
+    queues = {'crawl': stats(CRAWL_QUEUE_URL), 'index': stats(INDEX_QUEUE_URL)}
 
     return jsonify({
         'crawlers': crawlers,
