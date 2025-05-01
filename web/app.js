@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchBtn = document.getElementById('searchBtn');
   const searchInput = document.getElementById('searchQuery');
   const resultsDiv = document.getElementById('results');
+  const monitorBody = document.getElementById('monitorBody');
 
   let jobId = null;
   let pollInterval = null;
@@ -40,7 +41,6 @@ document.addEventListener('DOMContentLoaded', () => {
       jobId = data.jobId;
 
       statusText.textContent = `Job ${jobId} started. Discovered: 0, Indexed: 0.`;
-      // poll every 2 seconds
       pollInterval = setInterval(fetchStatus, 2000);
       fetchStatus();
     } catch (e) {
@@ -112,4 +112,34 @@ document.addEventListener('DOMContentLoaded', () => {
         '<p class="text-red-500">Search failed. See console for details.</p>';
     }
   });
+
+  // 4) Monitoring: fetch node statuses
+  async function fetchMonitor() {
+    try {
+      const resp = await fetch(`${API_BASE}/monitor`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const nodes = await resp.json(); // [{nodeId, role, alive, state, currentUrl}, ...]
+
+      monitorBody.innerHTML = '';
+      nodes.forEach(n => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="border px-2 py-1">${n.nodeId}</td>
+          <td class="border px-2 py-1">${n.role}</td>
+          <td class="border px-2 py-1 ${n.alive ? 'text-green-600' : 'text-red-600'}">
+            ${n.alive ? 'alive' : 'dead'}
+          </td>
+          <td class="border px-2 py-1">${n.state}</td>
+          <td class="border px-2 py-1 break-all">${n.currentUrl || '-'}</td>
+        `;
+        monitorBody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error('Monitor error', e);
+    }
+  }
+
+  // Kick off monitoring polls every 5s
+  fetchMonitor();
+  setInterval(fetchMonitor, 5000);
 });
