@@ -126,7 +126,7 @@ def main():
     for _ in range(THREAD_COUNT):
         t = threading.Thread(target=worker_loop, daemon=True)
         t.start()
-    # keep the main thread alive
+    # keep the main thread alive s
     while True:
         time.sleep(60)
 
