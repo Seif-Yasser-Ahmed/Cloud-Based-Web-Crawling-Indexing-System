@@ -170,7 +170,7 @@ def worker_loop(thread_id: str):
             index_task(thread_id, msg)
 
 
-# ─── Entrypoint ───────────────────────────────────────────────────────────────
+# ─── Entrypoints ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     logger.info("Starting %d indexer threads on %s", THREAD_COUNT, NODE_BASE)
     for i in range(THREAD_COUNT):
