@@ -2,9 +2,11 @@
 """
 indexer_worker.py — High-throughput indexer worker with per-thread RDS monitoring.
 
-Now skips any page_url already indexed (by job_id + page_url_hash) and logs the skip.
 Each thread long-polls SQS, processes one message end-to-end, updates the
 `heartbeats` table with its role, state, and current URL, then loops again.
+
+Now skips any page_url that has been indexed in **any** job (past or present),
+logging the skip and not counting it.
 """
 
 import os
@@ -98,21 +100,22 @@ def index_task(thread_id: str, msg):
         # compute URL hash
         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
 
-        # check if already indexed for this job
+        # check if this URL hash exists in **any** job
         conn = get_connection()
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT 1 FROM index_entries
-                 WHERE job_id = %s AND page_url_hash = %s
+                SELECT 1
+                  FROM index_entries
+                 WHERE page_url_hash = %s
                  LIMIT 1
-            """, (job_id, url_hash))
+            """, (url_hash,))
             already = cur.fetchone() is not None
         conn.close()
 
         if already:
-            logger.info("[%s] skipping already indexed %s",
+            logger.info("[%s] skipping already indexed URL: %s",
                         thread_id, page_url)
-            return
+            return  # message will be deleted below
 
         # tokenize & count frequencies
         freqs = {}
@@ -179,5 +182,6 @@ if __name__ == '__main__':
         t = threading.Thread(target=worker_loop,
                              args=(thread_id,), daemon=True)
         t.start()
+    # keep main alive
     while True:
         time.sleep(60)
