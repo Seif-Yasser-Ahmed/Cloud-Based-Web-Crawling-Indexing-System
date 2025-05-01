@@ -139,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Kick off monitoring polls every 5s
+  // Kick off monitoring polls every 5ss
   fetchMonitor();
   setInterval(fetchMonitor, 5000);
 });
