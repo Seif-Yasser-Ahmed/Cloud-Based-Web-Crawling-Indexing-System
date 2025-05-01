@@ -64,6 +64,8 @@ def send_node_heartbeat():
     conn.commit()
     conn.close()
 
+
+
 # ─── The actual crawl + enqueue logic ──────────────────────────────────────────
 def crawl_task(msg):
     receipt = msg['ReceiptHandle']
@@ -100,18 +102,28 @@ def crawl_task(msg):
     threading.Thread(target=node_heartbeat_loop, daemon=True).start()
 
     try:
-        # --- 3) Fetch per-job config once ---
+            # --- 3) Fetch per-job config once (fix dict access) ---
         with job_config_lock:
             if job_id not in job_config:
                 conn = get_connection()
                 with conn.cursor() as cur:
-                    cur.execute("SELECT depth_limit, seed_url FROM jobs WHERE job_id=%s", (job_id,))
-                    row = cur.fetchone() or (1, '')
+                    cur.execute(
+                        "SELECT depth_limit, seed_url FROM jobs WHERE job_id=%s",
+                        (job_id,)
+                    )
+                    row = cur.fetchone()  # now a dict, or None if missing
                 conn.close()
-                depth_limit = int(row[0])
-                seed_netloc = urlparse(row[1]).netloc
+    
+                if row:
+                    depth_limit = int(row['depth_limit'])
+                    seed_netloc = urlparse(row['seed_url']).netloc
+                else:
+                    depth_limit, seed_netloc = 1, ''
+    
                 job_config[job_id] = (depth_limit, seed_netloc)
+    
             depth_limit, seed_netloc = job_config[job_id]
+
 
         # --- 4) robots.txt politeness ---
         parsed = urlparse(url)
