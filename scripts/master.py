@@ -34,7 +34,7 @@ HEARTBEAT_TIMEOUT = int(os.environ.get('HEARTBEAT_TIMEOUT', 60))
 HEARTBEAT_POLL_INTERVAL = int(os.environ.get('HEARTBEAT_POLL_INTERVAL', 30))
 
 # AWS clients
-sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
+sqs = boto3.client('sqs', region_name='eu-north-1')
 
 # Flask setup
 app = Flask(__name__)
