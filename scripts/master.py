@@ -22,7 +22,9 @@ from db import get_connection
 CRAWL_QUEUE_URL      = os.environ['CRAWL_QUEUE_URL']
 INDEX_QUEUE_URL      = os.environ['INDEX_TASK_QUEUE']
 MASTER_PORT          = int(os.environ.get('MASTER_PORT', 5000))
-AWS_REGION           = os.environ['AWS_REGION']
+
+# AWS region: try AWS_REGION, then AWS_DEFAULT_REGION, else allow boto3 default lookup
+AWS_REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
 
 HEARTBEAT_TABLE      = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
 HEARTBEAT_TIMEOUT    = int(os.environ.get('HEARTBEAT_TIMEOUT', 60))
@@ -41,18 +43,18 @@ logger = logging.getLogger("MASTER")
 # Flask setup
 app = Flask(__name__)
 CORS(app)
-# Propagate exceptions so they appear in logs
 app.config['PROPAGATE_EXCEPTIONS'] = True
-app.config['TRAP_HTTP_EXCEPTIONS'] = True
+app.config['TRAP_HTTP_EXCEPTIONS']    = True
 
 # AWS SQS client
-sqs = boto3.client('sqs', region_name=AWS_REGION)
-
+if AWS_REGION:
+    sqs = boto3.client('sqs', region_name=AWS_REGION)
+else:
+    sqs = boto3.client('sqs')  # rely on default region provider chain
 
 @app.route('/health', methods=['GET'])
 def health():
     return 'OK', 200
-
 
 @app.route('/jobs', methods=['POST'])
 def start_job():
@@ -96,7 +98,6 @@ def start_job():
         logger.exception("Error in /jobs POST")
         return jsonify({'error': 'Internal server error'}), 500
 
-
 @app.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
     """
@@ -129,7 +130,6 @@ def get_job_status(job_id):
         logger.exception("Error in /jobs/%s GET", job_id)
         return jsonify({'error': 'Internal server error'}), 500
 
-
 @app.route('/search', methods=['GET'])
 def search_index():
     """
@@ -158,7 +158,6 @@ def search_index():
         logger.exception("Error in /search")
         return jsonify({'error': 'Internal server error'}), 500
 
-
 @app.route('/status', methods=['GET'])
 def status():
     """
@@ -184,8 +183,7 @@ def status():
         crawlers = {}
         indexers = {}
         for r in hb_rows:
-            node_id, role, ts_str = r['node_id'], r['role'], r['ts']
-            ts = float(ts_str)
+            node_id, role, ts = r['node_id'], r['role'], float(r['ts'])
             alive = (now - ts) < HEARTBEAT_TIMEOUT
             if role == 'crawler':
                 crawlers[node_id] = 'alive' if alive else 'dead'
@@ -222,7 +220,6 @@ def status():
     except Exception:
         logger.exception("Error in /status")
         return jsonify({'error': 'Internal server error'}), 500
-
 
 if __name__ == '__main__':
     logger.info("Starting master on port %d", MASTER_PORT)
