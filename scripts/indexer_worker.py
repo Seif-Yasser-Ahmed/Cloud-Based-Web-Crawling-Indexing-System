@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-indexer_worker.py — High-throughput indexer worker with per-thread RDS monitoring
-and bigram support for multi-word search.
+indexer_worker.py — High-throughput indexer worker with per-thread RDS monitoring.
 
 Each thread long-polls SQS, processes one message end-to-end, updates the
 `heartbeats` table with its role, state, and current URL, then loops again.
 
-To avoid duplicates:
-- We atomically claim each URL in the `seen_urls` table (page_url_hash PRIMARY KEY).
-- We index unigrams **and** adjacent bigrams (two-word phrases).
+Now skips any page_url that has ever been indexed (in any job), logging the skip
+and not inserting or counting it, so you’ll never see duplicates in search.
 """
 
 import os
@@ -20,17 +18,17 @@ import socket
 import hashlib
 
 import boto3
-from pymysql.err import IntegrityError
 from db import get_connection
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 INDEX_QUEUE_URL = os.environ['INDEX_TASK_QUEUE']
-THREAD_COUNT = int(os.environ.get(
-    'THREAD_COUNT', os.environ.get('MAX_THREADS', '5')))
+THREAD_COUNT = int(os.environ.get('THREAD_COUNT',
+                                  os.environ.get('MAX_THREADS', '5')))
 POLL_WAIT_TIME = int(os.environ.get('POLL_WAIT_TIME_SEC', '5'))
 VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', '120'))
 HEARTBEAT_INTERVAL = int(os.environ.get('HEARTBEAT_POLL_INTERVAL', '30'))
 
+# Monitoring / identification
 NODE_BASE = os.environ.get('NODE_ID') or socket.gethostname()
 HEARTBEAT_TABLE = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
 ROLE = 'indexer'
@@ -45,7 +43,9 @@ sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 
 
 def update_state(thread_id: str, state: str, current_url: str = None):
-    """Insert or update this thread's heartbeat record in the `heartbeats` table."""
+    """
+    Insert or update this thread's heartbeat record in the `heartbeats` table.
+    """
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -88,7 +88,7 @@ def index_task(thread_id: str, msg):
                     VisibilityTimeout=VISIBILITY_TIMEOUT
                 )
             except Exception:
-                logger.exception("[%s] heartbeat failed", thread_id)
+                logger.exception("[%s] visibility heartbeat failed", thread_id)
     threading.Thread(target=vis_heartbeat, daemon=True).start()
 
     try:
@@ -97,36 +97,29 @@ def index_task(thread_id: str, msg):
         # compute URL hash
         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
 
-        # claim URL globally (seen_urls table must exist with PRIMARY KEY(page_url_hash))
+        # SKIP if already indexed anywhere
         conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO seen_urls (page_url_hash)
-                    VALUES (%s)
-                """, (url_hash,))
-            conn.commit()
-        except IntegrityError:
-            logger.info("[%s] skipping already seen URL: %s",
-                        thread_id, page_url)
-            return
-        finally:
-            conn.close()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1
+                  FROM index_entries
+                 WHERE page_url_hash = %s
+                 LIMIT 1
+            """, (url_hash,))
+            if cur.fetchone():
+                logger.info("[%s] skipping already indexed URL: %s",
+                            thread_id, page_url)
+                conn.close()
+                return
+        conn.close()
 
-        # tokenize into words
-        tokens = [w.lower() for w in content.split() if w.strip()]
+        # tokenize & count frequenciess
         freqs = {}
+        for w in content.split():
+            term = w.lower()
+            freqs[term] = freqs.get(term, 0) + 1
 
-        # unigrams
-        for w in tokens:
-            freqs[w] = freqs.get(w, 0) + 1
-
-        # bigrams (two-word phrases)
-        for i in range(len(tokens) - 1):
-            bg = tokens[i] + ' ' + tokens[i+1]
-            freqs[bg] = freqs.get(bg, 0) + 1
-
-        # prepare batch insert
+        # batch insert terms
         rows = [
             (job_id, page_url, url_hash, term, freq)
             for term, freq in freqs.items()
@@ -143,7 +136,7 @@ def index_task(thread_id: str, msg):
         with conn.cursor() as cur:
             if rows:
                 cur.executemany(insert_sql, rows)
-            # increment job's indexed count once
+            # update indexed_count once
             cur.execute(
                 "UPDATE jobs SET indexed_count = indexed_count + 1 WHERE job_id = %s",
                 (job_id,)
@@ -151,7 +144,7 @@ def index_task(thread_id: str, msg):
         conn.commit()
         conn.close()
 
-        logger.info("[%s] indexed %s → %d unique tokens (incl. bigrams)",
+        logger.info("[%s] indexed %s (%d terms)",
                     thread_id, page_url, len(rows))
 
     except Exception:
