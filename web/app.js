@@ -1,6 +1,8 @@
-// app.js
+// app.js - Updated: May 1, 2025
 
+// Force HTTP and port 5000 in the URL
 const API_BASE = 'http://ec2-51-20-86-200.eu-north-1.compute.amazonaws.com:5000';
+console.log('API URL:', API_BASE); // Log the URL to confirm it's correct
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Elements ---
