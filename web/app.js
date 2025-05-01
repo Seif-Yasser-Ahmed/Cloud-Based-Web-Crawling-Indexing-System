@@ -1,6 +1,6 @@
 // app.js
 
-const API_BASE = 'https://ec2-51-20-86-200.eu-north-1.compute.amazonaws.com';
+const API_BASE = 'http://ec2-51-20-86-200.eu-north-1.compute.amazonaws.com:5000';
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Elements ---

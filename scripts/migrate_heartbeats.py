@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO,
                     format='[MIGRATION] %(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("migrate_heartbeats")
 
+
 def check_column_exists(cursor, table, column):
     """Check if a column exists in a table"""
     cursor.execute(f"""
@@ -22,9 +23,10 @@ def check_column_exists(cursor, table, column):
     """)
     return cursor.fetchone()['count'] > 0
 
+
 def main():
     logger.info("Starting heartbeats table migration...")
-    
+
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -37,7 +39,7 @@ def main():
                 ) ENGINE=InnoDB CHARSET=utf8mb4;
             """)
             logger.info("Ensured heartbeats table exists")
-            
+
             # Add state column if it doesn't exist
             if not check_column_exists(cur, 'heartbeats', 'state'):
                 logger.info("Adding 'state' column to heartbeats table")
@@ -48,7 +50,7 @@ def main():
                 logger.info("Added 'state' column successfully")
             else:
                 logger.info("'state' column already exists")
-                
+
             # Add current_url column if it doesn't exist
             if not check_column_exists(cur, 'heartbeats', 'current_url'):
                 logger.info("Adding 'current_url' column to heartbeats table")
@@ -59,7 +61,7 @@ def main():
                 logger.info("Added 'current_url' column successfully")
             else:
                 logger.info("'current_url' column already exists")
-                
+
         conn.commit()
         logger.info("Migration completed successfully")
     except Exception as e:
@@ -67,6 +69,7 @@ def main():
         raise
     finally:
         conn.close()
+
 
 if __name__ == '__main__':
     main()
