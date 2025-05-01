@@ -134,7 +134,7 @@ def index_task(msg):
         logger.exception("Error indexing %s", page_url)
 
     finally:
-        # stop heartbeat threads, mark waiting, delete msg
+        # stop heartbeat threads, mark waiting, delete msgs
         stop_vis.set()
         update_state('waiting', None)
         sqs.delete_message(QueueUrl=INDEX_QUEUE_URL, ReceiptHandle=receipt)
