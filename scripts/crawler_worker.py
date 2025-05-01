@@ -2,8 +2,9 @@
 """
 crawler_worker.py — High‐throughput crawler worker with RDS‐based monitoring.
 
-Each thread long‐polls SQS, processes one message end-to-end, updates the
-`heartbeats` table with its role, state, and current URL, then loops again.
+Each thread long‐polls SQS, processes one message end‐to‐end, updates the
+`heartbeats` table (not crawler_heartbeats) with its role, state, and current URL,
+then loops again.
 """
 
 import os
@@ -40,7 +41,6 @@ ALLOW_EXTERNAL = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
 
 # Monitoring / identification
 NODE_ID = os.environ.get('NODE_ID') or socket.gethostname()
-# *** Ensure this matches your actual table name ***
 HEARTBEAT_TABLE = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
 ROLE = 'crawler'
 
@@ -61,7 +61,7 @@ job_config_lock = threading.Lock()
 
 
 def update_state(state: str, current_url: str = None):
-    """Insert/update this node's heartbeat record in the correct table."""
+    """Insert/update this node's heartbeat record in the `heartbeats` table."""
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(f"""
