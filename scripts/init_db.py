@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-init_db.py — Ensure RDS schema exists: create `jobs` and `index_entries` tables if needed.
+init_db.py — Ensure RDS schema exists: create `jobs`, `index_entries` and `heartbeats` tables if needed.
 """
 
 from db import get_connection
@@ -26,8 +26,18 @@ DDL = [
       frequency      INT          NOT NULL DEFAULT 1,
       PRIMARY KEY (term, job_id, page_url_hash)
     ) ENGINE=InnoDB CHARSET=utf8mb4;
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS heartbeats (
+      node_id         VARCHAR(255) PRIMARY KEY,
+      role            VARCHAR(50)  NOT NULL,
+      last_heartbeat  DATETIME     NOT NULL,
+      state           VARCHAR(50)  DEFAULT 'waiting',
+      current_url     TEXT         NULL
+    ) ENGINE=InnoDB CHARSET=utf8mb4;
     """
 ]
+
 
 def main():
     conn = get_connection()
@@ -37,6 +47,7 @@ def main():
             cur.execute(stmt)
     conn.close()
     print("✅ Tables are ensured.")
+
 
 if __name__ == '__main__':
     main()
