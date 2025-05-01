@@ -19,15 +19,17 @@ from db import get_connection
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration via environment variables
-CRAWL_QUEUE_URL        = os.environ['CRAWL_QUEUE_URL']
-INDEX_QUEUE_URL        = os.environ['INDEX_TASK_QUEUE']
-MASTER_PORT            = int(os.environ.get('MASTER_PORT', 5000))
+CRAWL_QUEUE_URL      = os.environ['CRAWL_QUEUE_URL']
+INDEX_QUEUE_URL      = os.environ['INDEX_TASK_QUEUE']
+MASTER_PORT          = int(os.environ.get('MASTER_PORT', 5000))
 
-HEARTBEAT_TABLE        = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
-HEARTBEAT_TIMEOUT      = int(os.environ.get('HEARTBEAT_TIMEOUT', 60))
+HEARTBEAT_TABLE      = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
+HEARTBEAT_TIMEOUT    = int(os.environ.get('HEARTBEAT_TIMEOUT', 60))
 
-CRAWLER_THREAD_COUNT   = int(os.environ.get('CRAWLER_THREAD_COUNT', os.environ.get('THREAD_COUNT', '5')))
-INDEXER_THREAD_COUNT   = int(os.environ.get('INDEXER_THREAD_COUNT', os.environ.get('THREAD_COUNT', '10')))
+CRAWLER_THREAD_COUNT = int(os.environ.get('CRAWLER_THREAD_COUNT',
+                             os.environ.get('THREAD_COUNT', '5')))
+INDEXER_THREAD_COUNT = int(os.environ.get('INDEXER_THREAD_COUNT',
+                             os.environ.get('THREAD_COUNT', '10')))
 
 # AWS SQS client
 sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
@@ -90,13 +92,13 @@ def get_job_status(job_id):
     with conn.cursor() as cur:
         cur.execute("""
             SELECT
-              job_id      AS jobId,
-              seed_url    AS seedUrl,
-              depth_limit AS depthLimit,
+              job_id          AS jobId,
+              seed_url        AS seedUrl,
+              depth_limit     AS depthLimit,
               discovered_count AS discoveredCount,
               indexed_count    AS indexedCount,
               status,
-              created_at        AS createdAt
+              created_at      AS createdAt
             FROM jobs
             WHERE job_id = %s
         """, (job_id,))
@@ -155,7 +157,9 @@ def status():
     crawlers = {}
     indexers = {}
     for node_id, role, ts in hb_rows:
-        alive = (now - ts) < HEARTBEAT_TIMEOUT
+        # ensure ts is numeric
+        ts_val = float(ts)
+        alive = (now - ts_val) < HEARTBEAT_TIMEOUT
         if role == 'crawler':
             crawlers[node_id] = 'alive' if alive else 'dead'
         else:
