@@ -13,7 +13,7 @@ THREAD_COUNT       = int(os.environ.get('INDEXER_THREAD_COUNT',10))
 POLL_WAIT_TIME     = int(os.environ.get('POLL_WAIT_TIME_SEC','5'))
 VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT','120'))
 HEARTBEAT_INTERVAL = VISIBILITY_TIMEOUT//2
-HEARTBEAT_TABLE    = os.environ.get('HEARTBEAT_TABLE','heartbeats')
+HEARTBEAT_TABLE = 'heartbeats'
 
 logging.basicConfig(level=logging.INFO, format='[INDEXER] %(levelname)s %(message)s')
 logger = logging.getLogger()
