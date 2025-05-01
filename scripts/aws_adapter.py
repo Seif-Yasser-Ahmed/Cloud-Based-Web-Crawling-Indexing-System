@@ -4,13 +4,15 @@ import time
 import boto3
 from botocore.exceptions import ClientError
 
+
 class SqsQueue:
     def __init__(self, url: str):
         self.url = url
         self.client = boto3.client('sqs', region_name=os.environ['AWS_REGION'])
 
     def send(self, payload: dict):
-        self.client.send_message(QueueUrl=self.url, MessageBody=json.dumps(payload))
+        self.client.send_message(
+            QueueUrl=self.url, MessageBody=json.dumps(payload))
 
     def receive(self, max_messages=1, wait=20):
         resp = self.client.receive_message(
@@ -21,7 +23,8 @@ class SqsQueue:
         return resp.get('Messages', [])
 
     def delete(self, receipt_handle: str):
-        self.client.delete_message(QueueUrl=self.url, ReceiptHandle=receipt_handle)
+        self.client.delete_message(
+            QueueUrl=self.url, ReceiptHandle=receipt_handle)
 
 
 class S3Storage:
@@ -30,7 +33,8 @@ class S3Storage:
         self.client = boto3.client('s3', region_name=os.environ['AWS_REGION'])
 
     def upload(self, key: str, content: str):
-        self.client.put_object(Bucket=self.bucket, Key=key, Body=content.encode('utf-8'))
+        self.client.put_object(Bucket=self.bucket, Key=key,
+                               Body=content.encode('utf-8'))
         return key
 
     def download(self, key: str) -> str:
@@ -41,7 +45,7 @@ class S3Storage:
 class DynamoState:
     def __init__(self, table_name: str):
         self.table = boto3.resource('dynamodb', region_name=os.environ['AWS_REGION']) \
-                         .Table(table_name)
+            .Table(table_name)
 
     def get(self, url: str) -> dict:
         resp = self.table.get_item(Key={'url': url})
@@ -106,7 +110,8 @@ class DynamoState:
             raise
 
     def complete_crawl(self, url: str, s3_key: str):
-        self.update(url, crawl_status="DONE", s3_key=s3_key, ts=int(time.time()))
+        self.update(url, crawl_status="DONE",
+                    s3_key=s3_key, ts=int(time.time()))
 
     def claim_index(self, url: str) -> bool:
         now = int(time.time())
@@ -134,8 +139,8 @@ class DynamoState:
 
 class HeartbeatManager:
     def __init__(self, table_name: str, timeout: int = 10):
-        self.table = boto3.resource('dynamodb', region_name=os.environ['AWS_REGION']) \
-                         .Table(table_name)
+        self.table = boto3.resource('dynamodb', 'eu-north-1') \
+            .Table(table_name)
         self.timeout = timeout
 
     def update(self, node_id: str):
