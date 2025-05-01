@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-indexer_worker.py — High‐throughput indexer worker with per-thread RDS monitoring.
+indexer_worker.py — High-throughput indexer worker with per-thread RDS monitoring.
 
-Each thread long‐polls SQS, processes one message end-to-end, updates the
+Now skips any page_url already indexed (by job_id + page_url_hash) and logs the skip.
+Each thread long-polls SQS, processes one message end-to-end, updates the
 `heartbeats` table with its role, state, and current URL, then loops again.
 """
 
@@ -86,7 +87,7 @@ def index_task(thread_id: str, msg):
                     ReceiptHandle=receipt,
                     VisibilityTimeout=VISIBILITY_TIMEOUT
                 )
-            except:
+            except Exception:
                 logger.exception("[%s] visibility heartbeat failed", thread_id)
     threading.Thread(target=vis_heartbeat, daemon=True).start()
 
@@ -97,6 +98,22 @@ def index_task(thread_id: str, msg):
         # compute URL hash
         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
 
+        # check if already indexed for this job
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM index_entries
+                 WHERE job_id = %s AND page_url_hash = %s
+                 LIMIT 1
+            """, (job_id, url_hash))
+            already = cur.fetchone() is not None
+        conn.close()
+
+        if already:
+            logger.info("[%s] skipping already indexed %s",
+                        thread_id, page_url)
+            return
+
         # tokenize & count frequencies
         freqs = {}
         for w in content.split():
@@ -104,10 +121,8 @@ def index_task(thread_id: str, msg):
             freqs[term] = freqs.get(term, 0) + 1
 
         # batch insert terms
-        rows = [
-            (job_id, page_url, url_hash, term, freq)
-            for term, freq in freqs.items()
-        ]
+        rows = [(job_id, page_url, url_hash, term, freq)
+                for term, freq in freqs.items()]
         insert_sql = """
             INSERT INTO index_entries
               (job_id, page_url, page_url_hash, term, frequency)
@@ -120,7 +135,7 @@ def index_task(thread_id: str, msg):
         with conn.cursor() as cur:
             if rows:
                 cur.executemany(insert_sql, rows)
-            # update indexed_count
+            # update indexed_count once
             cur.execute(
                 "UPDATE jobs SET indexed_count = indexed_count + 1 WHERE job_id = %s",
                 (job_id,)
@@ -153,7 +168,7 @@ def worker_loop(thread_id: str):
         )
         for msg in resp.get('Messages', []):
             index_task(thread_id, msg)
-        # loop immediately again
+        # immediately loop again
 
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
