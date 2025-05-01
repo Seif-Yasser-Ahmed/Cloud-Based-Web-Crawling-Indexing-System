@@ -1,14 +1,6 @@
+# master.py
+# -----------------------
 #!/usr/bin/env python3
-"""
-master.py — Flask API for distributed crawler/indexer using RDS + SQS.
-
-Endpoints:
-  GET    /health           — simple OK check
-  POST   /jobs             — start a new crawl job
-  GET    /jobs/<job_id>    — get status & progress for a job
-  GET    /search?query=…   — search indexed pages by term
-  GET    /nodes            — list crawler node statuses (alive/dead)
-"""
 
 import os
 import json
@@ -25,7 +17,6 @@ import boto3
 from db import get_connection
 from aws_adapter import HeartbeatManager
 
-# ──────────────────────────────────────────────────────────────────────────────
 # Configuration
 CRAWL_QUEUE_URL = os.environ['CRAWL_QUEUE_URL']
 MASTER_PORT = int(os.environ.get('MASTER_PORT', 5000))
@@ -38,42 +29,27 @@ sqs = boto3.client('sqs', region_name='eu-north-1')
 
 # Flask setup
 app = Flask(__name__)
-# Only allow requests from your S3-hosted UI origin:
-CORS(app, resources={
-     r"/*": {"origins": "http://static-website-group9.s3-website.eu-north-1.amazonaws.com"}})
+CORS(app)   # ← allow all origins; tighten in prod if needed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Heartbeat manager & node status tracking
-heartbeat_mgr = HeartbeatManager(
-    table_name=HEARTBEAT_TABLE, timeout=HEARTBEAT_TIMEOUT)
+heartbeat_mgr = HeartbeatManager(table_name=HEARTBEAT_TABLE,
+                                 timeout=HEARTBEAT_TIMEOUT)
 node_status = {}
 
 
 def heartbeat_monitor():
-    """
-    Background thread that checks for timed-out crawler nodes
-    and updates node_status.
-    """
     while True:
         time.sleep(HEARTBEAT_POLL_INTERVAL)
-
-        # Mark dead nodes
-        dead_nodes = heartbeat_mgr.check_dead()
-        for nid in dead_nodes:
+        dead = heartbeat_mgr.check_dead()
+        for nid in dead:
             node_status[nid] = False
-
-        # Mark alive nodes
         all_ts = heartbeat_mgr.get_all()
         now = time.time()
         for nid, ts in all_ts.items():
-            if (now - ts) < HEARTBEAT_TIMEOUT:
-                node_status[nid] = True
-
-        logger.info(f"Node status updated: {node_status}")
-
-# ──────────────────────────────────────────────────────────────────────────────
+            node_status[nid] = (now - ts) < HEARTBEAT_TIMEOUT
+        logger.info(f"Node status: {node_status}")
 
 
 @app.route('/health', methods=['GET'])
@@ -83,13 +59,11 @@ def health():
 
 @app.route('/jobs', methods=['POST'])
 def start_job():
-    """Kick off a new crawl job by enqueuing the seed URL."""
     data = request.get_json(force=True)
     seed_url = data.get('seedUrl')
     if not seed_url:
         return jsonify({'error': 'Missing seedUrl'}), 400
 
-    # Enforce a sane maximum depth
     try:
         depth_limit = int(data.get('depthLimit', 2))
     except ValueError:
@@ -99,7 +73,7 @@ def start_job():
     job_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
-    # 1) Insert into RDS jobs table
+    # 1) Insert into RDS & commit
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -107,6 +81,9 @@ def start_job():
               (job_id, seed_url, depth_limit, created_at)
             VALUES (%s, %s, %s, %s)
         """, (job_id, seed_url, depth_limit, now))
+    conn.commit(
+        # ← this was missing :contentReference[oaicite:0]{index=0}&#8203;:contentReference[oaicite:1]{index=1}
+    )
     conn.close()
 
     # 2) Enqueue initial crawl message
@@ -119,25 +96,26 @@ def start_job():
         })
     )
 
-    # Initialize node status map for this new job
     node_status.clear()
-
     logger.info("Started job %s with seed %s", job_id, seed_url)
     return jsonify({'jobId': job_id}), 202
 
 
 @app.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
-    """Return the current counts & status for the given job."""
     conn = get_connection()
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT job_id AS jobId, seed_url AS seedUrl, depth_limit AS depthLimit, "
-            "discovered_count AS discoveredCount, indexed_count AS indexedCount, "
-            "status, created_at AS createdAt "
-            "FROM jobs WHERE job_id = %s",
-            (job_id,)
-        )
+        cur.execute("""
+            SELECT
+              job_id AS jobId,
+              seed_url AS seedUrl,
+              depth_limit AS depthLimit,
+              discovered_count AS discoveredCount,
+              indexed_count AS indexedCount,
+              status, created_at AS createdAt
+            FROM jobs
+            WHERE job_id = %s
+        """, (job_id,))
         row = cur.fetchone()
     conn.close()
 
@@ -148,7 +126,6 @@ def get_job_status(job_id):
 
 @app.route('/search', methods=['GET'])
 def search_index():
-    """Search the RDS index_entries table for a single term."""
     term = request.args.get('query', '').strip().lower()
     if not term:
         return jsonify([]), 200
@@ -157,9 +134,9 @@ def search_index():
     with conn.cursor() as cur:
         cur.execute("""
             SELECT page_url AS pageUrl, frequency
-              FROM index_entries
-             WHERE term = %s
-             ORDER BY frequency DESC
+            FROM index_entries
+            WHERE term = %s
+            ORDER BY frequency DESC
         """, (term,))
         items = cur.fetchall()
     conn.close()
@@ -169,19 +146,12 @@ def search_index():
 
 @app.route('/nodes', methods=['GET'])
 def list_nodes():
-    """
-    Get current crawler node statuses: alive or dead.
-    """
     human = {nid: ('alive' if alive else 'dead')
              for nid, alive in node_status.items()}
     return jsonify(human), 200
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    # Start heartbeat monitor thread
-    monitor = threading.Thread(target=heartbeat_monitor, daemon=True)
-    monitor.start()
-
+    threading.Thread(target=heartbeat_monitor, daemon=True).start()
     logger.info("Starting master on port %d", MASTER_PORT)
     app.run(host='0.0.0.0', port=MASTER_PORT, threaded=True)

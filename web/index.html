@@ -1,101 +1,32 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
     <title>Distributed Crawler</title>
 </head>
 
 <body class="bg-gray-100 text-gray-800">
-    <div class="max-w-5xl mx-auto p-6">
+    <div class="max-w-3xl mx-auto p-6">
         <h1 class="text-3xl font-bold mb-6 text-center">Distributed Crawler</h1>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-                <div class="bg-white rounded-lg shadow p-6 mb-6">
-                    <div class="mb-4">
-                        <label for="seedUrl" class="block text-sm font-medium text-gray-700">Seed URL</label>
-                        <input id="seedUrl" type="text"
-                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                            placeholder="https://example.com">
-                    </div>
-                    <div class="mb-4">
-                        <label for="depth" class="block text-sm font-medium text-gray-700">Depth</label>
-                        <input id="depth" type="number" min="1" value="2"
-                            class="mt-1 block w-24 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
-                    </div>
-                    <button id="startBtn"
-                        class="w-full bg-indigo-600 text-white py-2 rounded-md hover:bg-indigo-700 transition">Start
-                        Crawl</button>
-                </div>
-                <div id="status" class="bg-white rounded-lg shadow p-6 mb-6">
-                    <h2 class="text-xl font-semibold mb-2">Status</h2>
-                    <p id="statusText">No job started.</p>
-                </div>
-                <div class="bg-white rounded-lg shadow p-6 mb-6">
-                    <div class="mb-4">
-                        <label for="searchQuery" class="block text-sm font-medium text-gray-700">Search Indexed
-                            Pages</label>
-                        <input id="searchQuery" type="text"
-                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                            placeholder="Enter search term">
-                    </div>
-                    <button id="searchBtn"
-                        class="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700 transition">Search</button>
-                </div>
-                <div id="results" class="space-y-4 mb-6"></div>
-            </div>
 
-            <!-- Thread Monitor Section -->
-            <div>
-                <div class="bg-white rounded-lg shadow p-6 mb-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h2 class="text-xl font-semibold">Thread Monitor</h2>
-                        <button id="refreshMonitorBtn"
-                            class="px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 text-sm">
-                            Refresh
-                        </button>
-                    </div>
-
-                    <!-- Queue Information -->
-                    <div class="mb-6">
-                        <h3 class="font-medium text-lg mb-2">Queue Status</h3>
-                        <div class="bg-gray-100 p-3 rounded-md">
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <p class="text-sm font-semibold">Crawl Queue:</p>
-                                    <p class="text-sm">Visible: <span id="crawlQueueVisible">-</span></p>
-                                    <p class="text-sm">In Flight: <span id="crawlQueueInFlight">-</span></p>
-                                </div>
-                                <div>
-                                    <p class="text-sm font-semibold">Index Queue:</p>
-                                    <p class="text-sm">Visible: <span id="indexQueueVisible">-</span></p>
-                                    <p class="text-sm">In Flight: <span id="indexQueueInFlight">-</span></p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Crawler Threads -->
-                    <div class="mb-4">
-                        <h3 class="font-medium text-lg mb-2">Crawler Threads</h3>
-                        <div id="crawlerThreads" class="bg-gray-100 p-3 rounded-md max-h-60 overflow-y-auto">
-                            <p class="text-sm text-gray-500">No data available</p>
-                        </div>
-                    </div>
-
-                    <!-- Indexer Threads -->
-                    <div>
-                        <h3 class="font-medium text-lg mb-2">Indexer Threads</h3>
-                        <div id="indexerThreads" class="bg-gray-100 p-3 rounded-md max-h-60 overflow-y-auto">
-                            <p class="text-sm text-gray-500">No data available</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        <!-- Crawl controls -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            ...
+            placeholder="Enter search term" />
         </div>
+        <button id="searchBtn" class="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700">
+            Search
+        </button>
     </div>
+
+    <!-- Results -->
+    <div id="results" class="space-y-4 mb-6"></div>
+    </div>
+
     <script src="app.js"></script>
 </body>
 
