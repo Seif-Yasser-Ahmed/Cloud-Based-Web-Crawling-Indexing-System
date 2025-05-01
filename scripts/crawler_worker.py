@@ -29,7 +29,7 @@ ALLOW_EXTERNAL      = os.environ.get('ALLOW_EXTERNAL','false').lower()=='true'
 S3_BUCKET           = os.environ.get('S3_BUCKET')
 
 # unified heartbeat table
-HEARTBEAT_TABLE     = os.environ.get('HEARTBEAT_TABLE','heartbeats')
+HEARTBEAT_TABLE = 'heartbeats'
 
 logging.basicConfig(level=logging.INFO, format='[CRAWLER] %(levelname)s %(message)s')
 logger = logging.getLogger()
