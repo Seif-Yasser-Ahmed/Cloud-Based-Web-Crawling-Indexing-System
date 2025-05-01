@@ -2,8 +2,8 @@
 """
 crawler_worker.py — High‐throughput crawler worker with RDS‐based monitoring.
 
-Each thread long‐polls SQS, processes one message end-to-end, and immediately loops again.
-Worker updates `heartbeats` table with its role, state, and current URL for monitoring.
+Each thread long‐polls SQS, processes one message end-to-end, updates the
+`heartbeats` table with its role, state, and current URL, then loops again.
 """
 
 import os
@@ -11,6 +11,7 @@ import json
 import time
 import logging
 import threading
+import socket
 from uuid import uuid4
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -28,8 +29,8 @@ INDEX_QUEUE_URL = os.environ['INDEX_TASK_QUEUE']
 S3_BUCKET = os.environ.get('S3_BUCKET')
 
 # Concurrency
-THREAD_COUNT = int(os.environ.get(
-    'THREAD_COUNT', os.environ.get('MAX_THREADS', '5')))
+THREAD_COUNT = int(os.environ.get('THREAD_COUNT',
+                                  os.environ.get('MAX_THREADS', '5')))
 POLL_WAIT_TIME = int(os.environ.get('POLL_WAIT_TIME_SEC', '5'))
 VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', '120'))
 HEARTBEAT_INTERVAL = int(os.environ.get('HEARTBEAT_POLL_INTERVAL', '30'))
@@ -38,9 +39,9 @@ MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '3'))
 ALLOW_EXTERNAL = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
 
 # Monitoring / identification
-NODE_ID = os.environ.get('NODE_ID') or __import__('socket').gethostname()
+NODE_ID = os.environ.get('NODE_ID') or socket.gethostname()
 HEARTBEAT_TABLE = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
-ROLE = 'crawler'  # hard-coded role for this worker
+ROLE = 'crawler'
 
 # ─── Logging & AWS clients ─────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO,
@@ -55,13 +56,11 @@ robot_parsers = {}   # origin → RobotFileParser
 job_config = {}   # job_id → (depth_limit, seed_netloc)
 job_config_lock = threading.Lock()
 
-# ─── Monitoring helper ────────────────────────────────────────────────────────
+# ─── Monitoring helper ─────────────────────────────────────────────────────────
 
 
 def update_state(state: str, current_url: str = None):
-    """
-    Insert or update this node's heartbeat record with role, state, and current URL.
-    """
+    """Insert/update this node's heartbeat record with role, state, and current URL."""
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -70,8 +69,8 @@ def update_state(state: str, current_url: str = None):
             VALUES (%s, %s, NOW(), %s, %s)
             ON DUPLICATE KEY UPDATE
               last_heartbeat = NOW(),
-              state = VALUES(state),
-              current_url = VALUES(current_url)
+              state          = VALUES(state),
+              current_url    = VALUES(current_url)
         """, (NODE_ID, ROLE, state, current_url))
     conn.commit()
     conn.close()
@@ -90,7 +89,7 @@ def crawl_task(msg):
         sqs.delete_message(QueueUrl=CRAWL_QUEUE_URL, ReceiptHandle=receipt)
         return
 
-    # Register that we're idle/waiting before starting
+    # mark node as waiting before work
     update_state('waiting', None)
 
     # --- SQS visibility heartbeat ---
@@ -109,7 +108,7 @@ def crawl_task(msg):
     threading.Thread(target=vis_heartbeat, daemon=True).start()
 
     try:
-        # Update state to processing
+        # mark processing
         update_state('processing', url)
 
         # --- Fetch per-job config once ---
@@ -118,19 +117,20 @@ def crawl_task(msg):
                 conn = get_connection()
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT depth_limit, seed_url FROM jobs WHERE job_id=%s", (job_id,))
-                    row = cur.fetchone() or (1, '')
+                        "SELECT depth_limit, seed_url FROM jobs WHERE job_id = %s",
+                        (job_id,)
+                    )
+                    row = cur.fetchone() or {}
                 conn.close()
-                dl = int(row['depth_limit']) if isinstance(
-                    row, dict) else int(row[0])
-                sn = urlparse(row['seed_url'] if isinstance(
-                    row, dict) else row[1]).netloc
-                job_config[job_id] = (dl, sn)
-            depth_limit, seed_netloc = job_config[job_id]
+                depth_limit = int(row.get('depth_limit', 1))
+                seed_netloc = urlparse(row.get('seed_url', '')).netloc
+                job_config[job_id] = (depth_limit, seed_netloc)
+            else:
+                depth_limit, seed_netloc = job_config[job_id]
 
         # --- robots.txt politeness ---
-        p = urlparse(url)
-        origin = f"{p.scheme}://{p.netloc}"
+        parsed = urlparse(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
         rp = robot_parsers.get(origin)
         if rp is None:
             rp = RobotFileParser()
@@ -147,7 +147,7 @@ def crawl_task(msg):
 
         # --- Fetch with retry/backoff ---
         success, html = False, None
-        for i in range(1, MAX_RETRIES+1):
+        for i in range(1, MAX_RETRIES + 1):
             try:
                 r = requests.get(url, timeout=10, headers={
                                  'User-Agent': 'CrawlerWorker'})
@@ -155,7 +155,7 @@ def crawl_task(msg):
                 html, success = r.text, True
                 break
             except Exception as e:
-                backoff = 2**(i-1)
+                backoff = 2 ** (i - 1)
                 logger.warning(
                     "Fetch error %s (attempt %d), retry in %ds", e, i, backoff)
                 time.sleep(backoff)
@@ -163,7 +163,7 @@ def crawl_task(msg):
             logger.error("Failed to fetch %s", url)
             return
 
-        # --- Optional S3 upload of raw HTML ---
+        # --- Optional S3 upload ---
         if s3:
             key = f"pages/{job_id}/{uuid4().hex}.html"
             s3.upload(key, html)
@@ -194,10 +194,10 @@ def crawl_task(msg):
         children = []
         for a in soup.find_all('a', href=True):
             link = urljoin(url, a['href'].split('#')[0])
-            pp = urlparse(link)
-            if pp.scheme not in ('http', 'https'):
+            p = urlparse(link)
+            if p.scheme not in ('http', 'https'):
                 continue
-            if not ALLOW_EXTERNAL and pp.netloc != seed_netloc:
+            if not ALLOW_EXTERNAL and p.netloc != seed_netloc:
                 continue
             children.append(link)
         if depth < depth_limit:
@@ -211,14 +211,13 @@ def crawl_task(msg):
                     })
                 )
 
-        logger.info("Crawled %s (depth %d, found %d links)",
+        logger.info("Crawled %s (depth %d → found %d links)",
                     url, depth, len(children))
 
     except Exception:
         logger.exception("Error processing %s", url)
 
     finally:
-        # stop heartbeats & ack message
         stop_vis.set()
         update_state('waiting', None)
         sqs.delete_message(QueueUrl=CRAWL_QUEUE_URL, ReceiptHandle=receipt)
@@ -227,6 +226,8 @@ def crawl_task(msg):
 
 
 def worker_loop():
+    # On start, mark node waiting
+    update_state('waiting', None)
     while True:
         resp = sqs.receive_message(
             QueueUrl=CRAWL_QUEUE_URL,
@@ -240,10 +241,10 @@ def worker_loop():
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    logger.info("Starting %d crawler threads", THREAD_COUNT)
+    logger.info("Starting %d crawler threads for node %s",
+                THREAD_COUNT, NODE_ID)
     for _ in range(THREAD_COUNT):
         t = threading.Thread(target=worker_loop, daemon=True)
         t.start()
-    # keep alive
     while True:
         time.sleep(60)
