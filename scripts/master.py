@@ -1,3 +1,4 @@
+# master.py
 #!/usr/bin/env python3
 """
 master.py — Flask API for distributed crawler/indexer using RDS + SQS.
@@ -23,7 +24,6 @@ from flask_cors import CORS
 import boto3
 
 from db import get_connection
-from aws_adapter import HeartbeatManager
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -38,40 +38,38 @@ sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 
 # Flask setup
 app = Flask(__name__)
-# Only allow requests from your S3-hosted UI origin:
-CORS(app, resources={
-     r"/*": {"origins": "http://static-website-group9.s3-website.eu-north-1.amazonaws.com"}})
+CORS(app)  # adjust origins as needed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Heartbeat manager & node status tracking
-heartbeat_mgr = HeartbeatManager(
-    table_name=HEARTBEAT_TABLE, timeout=HEARTBEAT_TIMEOUT)
+# In‐memory node status: { node_id: bool(alive) }
 node_status = {}
 
 
 def heartbeat_monitor():
     """
-    Background thread that checks for timed-out crawler nodes
-    and updates node_status.
+    Background thread that polls the RDS heartbeats table and
+    updates node_status for each crawler node.
     """
     while True:
         time.sleep(HEARTBEAT_POLL_INTERVAL)
 
-        # Mark dead nodes
-        dead_nodes = heartbeat_mgr.check_dead()
-        for nid in dead_nodes:
-            node_status[nid] = False
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT node_id, UNIX_TIMESTAMP(last_heartbeat) "
+                "FROM " + HEARTBEAT_TABLE
+            )
+            rows = cur.fetchall()
+        conn.close()
 
-        # Mark alive nodes
-        all_ts = heartbeat_mgr.get_all()
         now = time.time()
-        for nid, ts in all_ts.items():
-            if (now - ts) < HEARTBEAT_TIMEOUT:
-                node_status[nid] = True
+        for node_id, ts in rows:
+            alive = (now - ts) < HEARTBEAT_TIMEOUT
+            node_status[node_id] = alive
 
-        logger.info(f"Node status updated: {node_status}")
+        logger.info("Node status → %s", node_status)
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -83,13 +81,11 @@ def health():
 
 @app.route('/jobs', methods=['POST'])
 def start_job():
-    """Kick off a new crawl job by enqueuing the seed URL."""
     data = request.get_json(force=True)
     seed_url = data.get('seedUrl')
     if not seed_url:
         return jsonify({'error': 'Missing seedUrl'}), 400
 
-    # Enforce a sane maximum depth
     try:
         depth_limit = int(data.get('depthLimit', 2))
     except ValueError:
@@ -99,7 +95,6 @@ def start_job():
     job_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
-    # 1) Insert into RDS jobs table
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -109,7 +104,6 @@ def start_job():
         """, (job_id, seed_url, depth_limit, now))
     conn.close()
 
-    # 2) Enqueue initial crawl message
     sqs.send_message(
         QueueUrl=CRAWL_QUEUE_URL,
         MessageBody=json.dumps({
@@ -119,16 +113,13 @@ def start_job():
         })
     )
 
-    # Initialize node status map for this new job
     node_status.clear()
-
     logger.info("Started job %s with seed %s", job_id, seed_url)
     return jsonify({'jobId': job_id}), 202
 
 
 @app.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
-    """Return the current counts & status for the given job."""
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
@@ -148,7 +139,6 @@ def get_job_status(job_id):
 
 @app.route('/search', methods=['GET'])
 def search_index():
-    """Search the RDS index_entries table for a single term."""
     term = request.args.get('query', '').strip().lower()
     if not term:
         return jsonify([]), 200
@@ -169,19 +159,14 @@ def search_index():
 
 @app.route('/nodes', methods=['GET'])
 def list_nodes():
-    """
-    Get current crawler node statuses: alive or dead.
-    """
-    human = {nid: ('alive' if alive else 'dead')
-             for nid, alive in node_status.items()}
-    return jsonify(human), 200
+    return jsonify({nid: ('alive' if alive else 'dead')
+                    for nid, alive in node_status.items()}), 200
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    # Start heartbeat monitor thread
     monitor = threading.Thread(target=heartbeat_monitor, daemon=True)
     monitor.start()
 
-    logger.info("Starting master on port %d", MASTER_PORT)
+    logger.info("Master starting on port %d", MASTER_PORT)
     app.run(host='0.0.0.0', port=MASTER_PORT, threaded=True)
