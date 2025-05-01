@@ -1,14 +1,20 @@
+# indexer_worker.py
+
 #!/usr/bin/env python3
 """
-indexer_worker.py — High-throughput indexer worker with per-thread RDS monitoring.
+indexer_worker.py — High-throughput indexer worker with per-thread RDS monitoring,
+robust text extraction, and Porter-stemming.
 
 Each thread long-polls SQS, processes one message end-to-end, updates the
 `heartbeats` table with its role, state, and current URL, then loops again.
 
-Now skips any page_url that has ever been indexed (in any job), logging the skip
-and not inserting or counting it, so you’ll never see duplicates in search.
+Content processing:
+ - Strips <script> and <style> tags
+ - Extracts text with BeautifulSoup
+ - Tokenizes on word characters via regex
+ - Applies Porter stemming to each token
+ - Generates both unigrams and bigrams of stems
 """
-
 import os
 import json
 import time
@@ -16,8 +22,12 @@ import logging
 import threading
 import socket
 import hashlib
+import re
 
 import boto3
+from pymysql.err import IntegrityError
+from nltk.stem.porter import PorterStemmer
+from bs4 import BeautifulSoup
 from db import get_connection
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
@@ -28,7 +38,6 @@ POLL_WAIT_TIME = int(os.environ.get('POLL_WAIT_TIME_SEC', '5'))
 VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', '120'))
 HEARTBEAT_INTERVAL = int(os.environ.get('HEARTBEAT_POLL_INTERVAL', '30'))
 
-# Monitoring / identification
 NODE_BASE = os.environ.get('NODE_ID') or socket.gethostname()
 HEARTBEAT_TABLE = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
 ROLE = 'indexer'
@@ -39,13 +48,13 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 
+stemmer = PorterStemmer()
+word_re = re.compile(r'\w+')
+
 # ─── Monitoring helper ─────────────────────────────────────────────────────────
 
 
 def update_state(thread_id: str, state: str, current_url: str = None):
-    """
-    Insert or update this thread's heartbeat record in the `heartbeats` table.
-    """
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -76,10 +85,9 @@ def index_task(thread_id: str, msg):
 
     update_state(thread_id, 'waiting')
 
-    # SQS visibility heartbeat
     stop_vis = threading.Event()
 
-    def vis_heartbeat():
+    def vis_hb():
         while not stop_vis.wait(HEARTBEAT_INTERVAL):
             try:
                 sqs.change_message_visibility(
@@ -87,43 +95,63 @@ def index_task(thread_id: str, msg):
                     ReceiptHandle=receipt,
                     VisibilityTimeout=VISIBILITY_TIMEOUT
                 )
-            except Exception:
+            except:
                 logger.exception("[%s] visibility heartbeat failed", thread_id)
-    threading.Thread(target=vis_heartbeat, daemon=True).start()
+    threading.Thread(target=vis_hb, daemon=True).start()
 
     try:
         update_state(thread_id, 'processing', page_url)
 
-        # compute URL hash
+        # compute URL hash and dedup
         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-
-        # SKIP if already indexed anywhere
         conn = get_connection()
+        already = False
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT 1
-                  FROM index_entries
-                 WHERE page_url_hash = %s
-                 LIMIT 1
+                SELECT 1 FROM seen_urls WHERE page_url_hash=%s LIMIT 1
             """, (url_hash,))
-            if cur.fetchone():
-                logger.info("[%s] skipping already indexed URL: %s",
-                            thread_id, page_url)
-                conn.close()
-                return
+            already = cur.fetchone() is not None
         conn.close()
+        if already:
+            logger.info("[%s] skipping already indexed URL: %s",
+                        thread_id, page_url)
+            return
 
-        # tokenize & count frequenciess
+        # claim URL globally
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO seen_urls (page_url_hash) VALUES (%s)
+                """, (url_hash,))
+            conn.commit()
+        except IntegrityError:
+            logger.info("[%s] racing skip for URL: %s", thread_id, page_url)
+            return
+        finally:
+            conn.close()
+
+        # robust text extraction
+        soup = BeautifulSoup(content, 'html.parser')
+        for tag in soup(['script', 'style']):
+            tag.decompose()
+        text = soup.get_text(separator=' ')
+        tokens = word_re.findall(text.lower())
+
+        # stemming and frequency
+        stems = [stemmer.stem(w) for w in tokens]
         freqs = {}
-        for w in content.split():
-            term = w.lower()
-            freqs[term] = freqs.get(term, 0) + 1
+        # unigrams
+        for s in stems:
+            freqs[s] = freqs.get(s, 0) + 1
+        # bigrams
+        for i in range(len(stems)-1):
+            bg = stems[i] + ' ' + stems[i+1]
+            freqs[bg] = freqs.get(bg, 0) + 1
 
-        # batch insert terms
-        rows = [
-            (job_id, page_url, url_hash, term, freq)
-            for term, freq in freqs.items()
-        ]
+        # batch insert
+        rows = [(job_id, page_url, url_hash, term, freq)
+                for term, freq in freqs.items()]
         insert_sql = """
             INSERT INTO index_entries
               (job_id, page_url, page_url_hash, term, frequency)
@@ -131,20 +159,18 @@ def index_task(thread_id: str, msg):
             ON DUPLICATE KEY UPDATE
               frequency = frequency + VALUES(frequency)
         """
-
         conn = get_connection()
         with conn.cursor() as cur:
             if rows:
                 cur.executemany(insert_sql, rows)
-            # update indexed_count once
             cur.execute(
-                "UPDATE jobs SET indexed_count = indexed_count + 1 WHERE job_id = %s",
+                "UPDATE jobs SET indexed_count = indexed_count + 1 WHERE job_id=%s",
                 (job_id,)
             )
         conn.commit()
         conn.close()
 
-        logger.info("[%s] indexed %s (%d terms)",
+        logger.info("[%s] indexed %s (%d unique terms)",
                     thread_id, page_url, len(rows))
 
     except Exception:
@@ -170,13 +196,11 @@ def worker_loop(thread_id: str):
             index_task(thread_id, msg)
 
 
-# ─── Entrypoints ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     logger.info("Starting %d indexer threads on %s", THREAD_COUNT, NODE_BASE)
     for i in range(THREAD_COUNT):
-        thread_id = f"{NODE_BASE}-t{i}"
-        t = threading.Thread(target=worker_loop,
-                             args=(thread_id,), daemon=True)
+        tid = f"{NODE_BASE}-t{i}"
+        t = threading.Thread(target=worker_loop, args=(tid,), daemon=True)
         t.start()
     while True:
         time.sleep(60)
