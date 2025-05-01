@@ -27,10 +27,10 @@ from aws_adapter import HeartbeatManager
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
-CRAWL_QUEUE_URL = os.environ['CRAWL_QUEUE_URL']
-MASTER_PORT = int(os.environ.get('MASTER_PORT', 5000))
-HEARTBEAT_TABLE = os.environ.get('HEARTBEAT_TABLE', 'crawler_heartbeats')
-HEARTBEAT_TIMEOUT = int(os.environ.get('HEARTBEAT_TIMEOUT', 60))
+CRAWL_QUEUE_URL       = os.environ['CRAWL_QUEUE_URL']
+MASTER_PORT           = int(os.environ.get('MASTER_PORT', 5000))
+HEARTBEAT_TABLE       = os.environ.get('HEARTBEAT_TABLE', 'crawler_heartbeats')
+HEARTBEAT_TIMEOUT     = int(os.environ.get('HEARTBEAT_TIMEOUT', 60))
 HEARTBEAT_POLL_INTERVAL = int(os.environ.get('HEARTBEAT_POLL_INTERVAL', 30))
 
 # AWS clients
@@ -39,17 +39,14 @@ sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 # Flask setup
 app = Flask(__name__)
 # Only allow requests from your S3-hosted UI origin:
-CORS(app, resources={
-     r"/*": {"origins": "http://static-website-group9.s3-website.eu-north-1.amazonaws.com"}})
+CORS(app, resources={r"/*": {"origins": "http://static-website-group9.s3-website.eu-north-1.amazonaws.com"}})
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Heartbeat manager & node status tracking
-heartbeat_mgr = HeartbeatManager(
-    table_name=HEARTBEAT_TABLE, timeout=HEARTBEAT_TIMEOUT)
+heartbeat_mgr = HeartbeatManager(table_name=HEARTBEAT_TABLE, timeout=HEARTBEAT_TIMEOUT)
 node_status = {}
-
 
 def heartbeat_monitor():
     """
@@ -74,17 +71,14 @@ def heartbeat_monitor():
         logger.info(f"Node status updated: {node_status}")
 
 # ──────────────────────────────────────────────────────────────────────────────
-
-
 @app.route('/health', methods=['GET'])
 def health():
     return 'OK', 200
 
-
 @app.route('/jobs', methods=['POST'])
 def start_job():
     """Kick off a new crawl job by enqueuing the seed URL."""
-    data = request.get_json(force=True)
+    data     = request.get_json(force=True)
     seed_url = data.get('seedUrl')
     if not seed_url:
         return jsonify({'error': 'Missing seedUrl'}), 400
@@ -97,7 +91,7 @@ def start_job():
     depth_limit = min(max(depth_limit, 1), 5)
 
     job_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    now    = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     # 1) Insert into RDS jobs table
     conn = get_connection()
@@ -125,7 +119,6 @@ def start_job():
     logger.info("Started job %s with seed %s", job_id, seed_url)
     return jsonify({'jobId': job_id}), 202
 
-
 @app.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
     """Return the current counts & status for the given job."""
@@ -144,7 +137,6 @@ def get_job_status(job_id):
     if not row:
         return jsonify({'error': 'Job not found'}), 404
     return jsonify(row), 200
-
 
 @app.route('/search', methods=['GET'])
 def search_index():
@@ -166,16 +158,13 @@ def search_index():
 
     return jsonify(items), 200
 
-
 @app.route('/nodes', methods=['GET'])
 def list_nodes():
     """
     Get current crawler node statuses: alive or dead.
     """
-    human = {nid: ('alive' if alive else 'dead')
-             for nid, alive in node_status.items()}
+    human = {nid: ('alive' if alive else 'dead') for nid, alive in node_status.items()}
     return jsonify(human), 200
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
