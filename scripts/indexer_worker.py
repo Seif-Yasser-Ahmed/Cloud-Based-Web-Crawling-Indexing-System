@@ -5,8 +5,8 @@ indexer_worker.py — High-throughput indexer worker with per-thread RDS monitor
 Each thread long-polls SQS, processes one message end-to-end, updates the
 `heartbeats` table with its role, state, and current URL, then loops again.
 
-Now skips any page_url that has been indexed in **any** job (past or present),
-logging the skip and not counting it.
+Now skips any page_url that has ever been indexed (in any job), logging the skip
+and not inserting or counting it, so you’ll never see duplicates in search.
 """
 
 import os
@@ -37,7 +37,6 @@ ROLE = 'indexer'
 logging.basicConfig(level=logging.INFO,
                     format='[INDEXER] %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
-
 sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 
 # ─── Monitoring helper ─────────────────────────────────────────────────────────
@@ -75,7 +74,6 @@ def index_task(thread_id: str, msg):
         sqs.delete_message(QueueUrl=INDEX_QUEUE_URL, ReceiptHandle=receipt)
         return
 
-    # mark waiting
     update_state(thread_id, 'waiting')
 
     # SQS visibility heartbeat
@@ -94,13 +92,12 @@ def index_task(thread_id: str, msg):
     threading.Thread(target=vis_heartbeat, daemon=True).start()
 
     try:
-        # mark processing
         update_state(thread_id, 'processing', page_url)
 
         # compute URL hash
         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
 
-        # check if this URL hash exists in **any** job
+        # SKIP if already indexed anywhere
         conn = get_connection()
         with conn.cursor() as cur:
             cur.execute("""
@@ -109,13 +106,12 @@ def index_task(thread_id: str, msg):
                  WHERE page_url_hash = %s
                  LIMIT 1
             """, (url_hash,))
-            already = cur.fetchone() is not None
+            if cur.fetchone():
+                logger.info("[%s] skipping already indexed URL: %s",
+                            thread_id, page_url)
+                conn.close()
+                return
         conn.close()
-
-        if already:
-            logger.info("[%s] skipping already indexed URL: %s",
-                        thread_id, page_url)
-            return  # message will be deleted below
 
         # tokenize & count frequencies
         freqs = {}
@@ -124,8 +120,10 @@ def index_task(thread_id: str, msg):
             freqs[term] = freqs.get(term, 0) + 1
 
         # batch insert terms
-        rows = [(job_id, page_url, url_hash, term, freq)
-                for term, freq in freqs.items()]
+        rows = [
+            (job_id, page_url, url_hash, term, freq)
+            for term, freq in freqs.items()
+        ]
         insert_sql = """
             INSERT INTO index_entries
               (job_id, page_url, page_url_hash, term, frequency)
@@ -161,7 +159,6 @@ def index_task(thread_id: str, msg):
 
 
 def worker_loop(thread_id: str):
-    # initial heartbeat
     update_state(thread_id, 'waiting')
     while True:
         resp = sqs.receive_message(
@@ -171,7 +168,6 @@ def worker_loop(thread_id: str):
         )
         for msg in resp.get('Messages', []):
             index_task(thread_id, msg)
-        # immediately loop again
 
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
@@ -182,6 +178,5 @@ if __name__ == '__main__':
         t = threading.Thread(target=worker_loop,
                              args=(thread_id,), daemon=True)
         t.start()
-    # keep main alive
     while True:
         time.sleep(60)
