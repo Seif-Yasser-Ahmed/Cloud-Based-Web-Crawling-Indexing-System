@@ -113,7 +113,7 @@ def index_task(thread_id: str, msg):
                 return
         conn.close()
 
-        # tokenize & count frequencies
+        # tokenize & count frequenciess
         freqs = {}
         for w in content.split():
             term = w.lower()
