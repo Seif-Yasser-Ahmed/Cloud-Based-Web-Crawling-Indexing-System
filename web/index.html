@@ -1,4 +1,3 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 
@@ -15,16 +14,72 @@
 
         <!-- Crawl controls -->
         <div class="bg-white rounded-lg shadow p-6 mb-6">
-            ...
-            placeholder="Enter search term" />
+            <div class="mb-4">
+                <label for="seedUrl" class="block text-sm font-medium text-gray-700">Seed URL</label>
+                <input id="seedUrl" type="text" class="mt-1 block w-full px-3 py-2 border rounded-md"
+                    placeholder="https://example.com" />
+            </div>
+            <div class="mb-4">
+                <label for="depth" class="block text-sm font-medium text-gray-700">Depth</label>
+                <input id="depth" type="number" min="1" value="2" class="mt-1 block w-24 px-3 py-2 border rounded-md" />
+            </div>
+            <button id="startBtn" class="w-full bg-indigo-600 text-white py-2 rounded-md hover:bg-indigo-700">
+                Start Crawl
+            </button>
         </div>
-        <button id="searchBtn" class="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700">
-            Search
-        </button>
-    </div>
 
-    <!-- Results -->
-    <div id="results" class="space-y-4 mb-6"></div>
+        <!-- Status display -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-2">Status</h2>
+            <p id="statusText">No job started.</p>
+        </div>
+
+        <!-- Search controls -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <div class="mb-4">
+                <label for="searchQuery" class="block text-sm font-medium text-gray-700">Search Indexed Pages</label>
+                <input id="searchQuery" type="text" class="mt-1 block w-full px-3 py-2 border rounded-md"
+                    placeholder="Enter search term" />
+            </div>
+            <button id="searchBtn" class="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700">
+                Search
+            </button>
+        </div>
+
+        <!-- Search Results -->
+        <div id="results" class="space-y-4 mb-6"></div>
+
+        <!-- Monitoring panel -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6" id="monitorPanel">
+            <h2 class="text-xl font-semibold mb-2">Monitoring</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <p><strong>Crawler Threads:</strong> <span id="crawlerThreads">–</span></p>
+                    <p><strong>Indexer Threads:</strong> <span id="indexerThreads">–</span></p>
+                </div>
+                <div>
+                    <p><strong>Crawl Queue:</strong>
+                        <span id="crawlQueueVisible">–</span> visible,
+                        <span id="crawlQueueInFlight">–</span> in-flight
+                    </p>
+                    <p><strong>Index Queue:</strong>
+                        <span id="indexQueueVisible">–</span> visible,
+                        <span id="indexQueueInFlight">–</span> in-flight
+                    </p>
+                </div>
+            </div>
+            <h3 class="font-semibold mt-4">Node Status</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <p class="font-medium">Crawlers</p>
+                    <ul id="crawlerStatus" class="list-disc pl-5"></ul>
+                </div>
+                <div>
+                    <p class="font-medium">Indexers</p>
+                    <ul id="indexerStatus" class="list-disc pl-5"></ul>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="app.js"></script>
