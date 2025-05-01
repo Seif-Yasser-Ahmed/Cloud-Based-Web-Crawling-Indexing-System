@@ -13,45 +13,53 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 
 import boto3
-
 from db import get_connection
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-INDEX_QUEUE_URL    = os.environ['INDEX_TASK_QUEUE']
-
-MIN_THREADS        = int(os.environ.get('MIN_THREADS', 4))
-MAX_THREADS        = int(os.environ.get('MAX_THREADS', 20))
-SCALE_INTERVAL     = int(os.environ.get('SCALE_INTERVAL_SEC', 15))
-
-MSG_BATCH_SIZE     = int(os.environ.get('MSG_BATCH_SIZE', 15))
-POLL_WAIT_TIME     = int(os.environ.get('POLL_WAIT_TIME_SEC', 20))
-VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', 30))
-HEARTBEAT_INTERVAL = int(os.environ.get('HEARTBEAT_INTERVAL_SEC', VISIBILITY_TIMEOUT // 2))
-
-THREAD_COUNT = os.environ.get('THREAD_COUNT')
+INDEX_QUEUE_URL   = os.environ['INDEX_TASK_QUEUE']
+MSG_BATCH_SIZE    = int(os.environ.get('MSG_BATCH_SIZE', '5'))
+POLL_WAIT_TIME    = int(os.environ.get('POLL_WAIT_TIME_SEC', '20'))
+SCALE_INTERVAL    = int(os.environ.get('SCALE_INTERVAL_SEC', '30'))
+MIN_THREADS       = int(os.environ.get('MIN_THREADS', '2'))
+MAX_THREADS       = int(os.environ.get('MAX_THREADS', '10'))
+VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', '120'))
+HEARTBEAT_INTERVAL = VISIBILITY_TIMEOUT // 2
+THREAD_COUNT      = os.environ.get('THREAD_COUNT')
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format='[%(levelname)s] %(message)s'
+    format='[INDEXER] %(levelname)s %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# ─── AWS Client ────────────────────────────────────────────────────────────────
-sqs = boto3.client('sqs')
-
+# ─── AWS Client ─────────────────────────────────────────────────────────────────
+sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 
 def index_task(msg):
+    """
+    Process a single indexing task:
+    1) Extend message visibility via heartbeat thread
+    2) Compute MD5 hash of page_url
+    3) Tokenize content, count term frequencies
+    4) Insert/update RDS index_entries table
+    5) Increment jobs.indexed_count
+    6) Acknowledge (delete) the SQS message
+    """
     receipt = msg['ReceiptHandle']
     body    = json.loads(msg['Body'])
-    job_id  = body['jobId']
-    page_url= body['pageUrl']
-    content = body.get('content', '')
+    job_id  = body.get('jobId')
+    page_url= body.get('pageUrl')
+    content = body.get('content')
 
-    # Heartbeat to keep the message invisible
-    stop_event = threading.Event()
+    if not job_id or not page_url:
+        sqs.delete_message(QueueUrl=INDEX_QUEUE_URL, ReceiptHandle=receipt)
+        return
+
+    # --- Heartbeat thread to keep the message alive ---
+    stop_evt = threading.Event()
     def heartbeat():
-        while not stop_event.wait(HEARTBEAT_INTERVAL):
+        while not stop_evt.wait(HEARTBEAT_INTERVAL):
             try:
                 sqs.change_message_visibility(
                     QueueUrl=INDEX_QUEUE_URL,
@@ -59,83 +67,79 @@ def index_task(msg):
                     VisibilityTimeout=VISIBILITY_TIMEOUT
                 )
             except Exception:
-                logger.exception("Heartbeat failed")
-
-    hb_thread = threading.Thread(target=heartbeat, daemon=True)
-    hb_thread.start()
+                logger.exception("Failed to extend visibility for indexing task")
+    threading.Thread(target=heartbeat, daemon=True).start()
 
     try:
-        # Compute a fixed-length hash for the URL
+        # Compute a safe hash of the URL
         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
 
+        # Simple whitespace tokenization + lowercase
+        words = [w.lower() for w in content.split()]
+        freqs = {}
+        for w in words:
+            freqs[w] = freqs.get(w, 0) + 1
+
+        # Persist to RDS
         conn = get_connection()
         with conn.cursor() as cur:
-            #store 
-            terms_data = []
-            # Insert one row per unique, non-empty term
-            for raw_term in set(content.split()):
-                term = raw_term.strip().lower()
-                if not term:
-                    continue
-                terms_data.append((term, job_id, page_url, url_hash, 1))
-            if terms_data:
-                cur.executemany("""
+            for term, freq in freqs.items():
+                cur.execute(
+                    """
                     INSERT INTO index_entries
-                      (term, job_id, page_url, page_url_hash, frequency)
-                    VALUES (%s, %s, %s, %s, 1)
-                    ON DUPLICATE KEY UPDATE frequency = frequency + 1
-                # """, terms_data)
-                # (term, job_id, page_url, url_hash)
-            # Update indexed_count
+                      (job_id, page_url, page_url_hash, term, frequency)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY
+                      UPDATE frequency = frequency + VALUES(frequency)
+                    """,
+                    (job_id, page_url, url_hash, term, freq)
+                )
+            # Update the indexed_count for this job
             cur.execute(
                 "UPDATE jobs SET indexed_count = indexed_count + 1 WHERE job_id = %s",
                 (job_id,)
             )
+        conn.commit()
+        conn.close()
 
-        # Delete the processed message
-        sqs.delete_message(
-            QueueUrl=INDEX_QUEUE_URL,
-            ReceiptHandle=receipt
-        )
-
-        logger.info("Indexed %s for job %s", page_url, job_id)
+        logger.info("Indexed %s (%d unique terms)", page_url, len(freqs))
 
     except Exception:
-        logger.exception("Error processing index message")
+        logger.exception("Error processing indexing for %s", page_url)
 
     finally:
-        stop_event.set()
-        hb_thread.join(timeout=0)
-
+        # Stop heartbeat and delete message
+        stop_evt.set()
+        sqs.delete_message(QueueUrl=INDEX_QUEUE_URL, ReceiptHandle=receipt)
 
 def adjust_threads(executor):
+    """
+    Auto-scale thread pool based on queue backlog.
+    """
     try:
         attrs   = sqs.get_queue_attributes(
             QueueUrl=INDEX_QUEUE_URL,
             AttributeNames=['ApproximateNumberOfMessages']
         )['Attributes']
         backlog = int(attrs.get('ApproximateNumberOfMessages', 0))
-        target  = min(max(backlog // 5 + 1, MIN_THREADS), MAX_THREADS)
-        current = executor._max_workers
-
-        if current != target:
-            logger.info("Resizing threads: %d → %d", current, target)
+        # target = 1 thread per 10 messages, bounded
+        target  = min(max(backlog // 10 + 1, MIN_THREADS), MAX_THREADS)
+        if executor._max_workers != target:
+            logger.info("Resizing indexer threads: %d → %d",
+                        executor._max_workers, target)
             executor._max_workers = target
-
     except Exception:
-        logger.exception("Failed to adjust thread pool")
-
+        logger.exception("Failed to adjust indexer thread pool")
 
 def main():
     if THREAD_COUNT:
-        pool_size  = int(THREAD_COUNT)
-        auto_scale = False
+        size, auto_scale = int(THREAD_COUNT), False
     else:
-        pool_size  = MIN_THREADS
-        auto_scale = True
+        size, auto_scale = MIN_THREADS, True
 
-    executor = ThreadPoolExecutor(max_workers=pool_size)
-    logger.info("Starting indexer (threads=%d, auto_scale=%s)", pool_size, auto_scale)
+    executor = ThreadPoolExecutor(max_workers=size)
+    logger.info("Starting indexer (%d threads, auto_scale=%s)",
+                size, auto_scale)
 
     while True:
         resp = sqs.receive_message(
@@ -143,14 +147,13 @@ def main():
             MaxNumberOfMessages=MSG_BATCH_SIZE,
             WaitTimeSeconds=POLL_WAIT_TIME
         )
-        for msg in resp.get('Messages', []):
-            executor.submit(index_task, msg)
+        for m in resp.get('Messages', []):
+            executor.submit(index_task, m)
 
         if auto_scale:
             adjust_threads(executor)
 
         time.sleep(SCALE_INTERVAL)
-
 
 if __name__ == '__main__':
     main()
