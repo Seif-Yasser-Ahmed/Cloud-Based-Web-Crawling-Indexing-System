@@ -97,47 +97,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // 4) Monitoring: fetch threads, queues, and node heartbeats
-  async function fetchMonitor() {
-    try {
-      const resp = await fetch(`${API_BASE}/status`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const { crawlers, indexers, queues, threads } = await resp.json();
+  // // 4) Monitoring: fetch threads, queues, and node heartbeats
+  // async function fetchMonitor() {
+  //   try {
+  //     const resp = await fetch(`${API_BASE}/status`);
+  //     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  //     const { crawlers, indexers, queues, threads } = await resp.json();
 
-      // Threads
-      document.getElementById('crawlerThreads').textContent = threads.crawler;
-      document.getElementById('indexerThreads').textContent = threads.indexer;
+  //     // Threads
+  //     document.getElementById('crawlerThreads').textContent = threads.crawler;
+  //     document.getElementById('indexerThreads').textContent = threads.indexer;
 
-      // Queue depths
-      document.getElementById('crawlQueueVisible').textContent = queues.crawl.visible;
-      document.getElementById('crawlQueueInFlight').textContent = queues.crawl.inFlight;
-      document.getElementById('indexQueueVisible').textContent = queues.index.visible;
-      document.getElementById('indexQueueInFlight').textContent = queues.index.inFlight;
+  //     // Queue depths
+  //     document.getElementById('crawlQueueVisible').textContent = queues.crawl.visible;
+  //     document.getElementById('crawlQueueInFlight').textContent = queues.crawl.inFlight;
+  //     document.getElementById('indexQueueVisible').textContent = queues.index.visible;
+  //     document.getElementById('indexQueueInFlight').textContent = queues.index.inFlight;
 
-      // Node statuses
-      const cList = document.getElementById('crawlerStatus');
-      const iList = document.getElementById('indexerStatus');
-      cList.innerHTML = '';
-      iList.innerHTML = '';
+  //     // Node statuses
+  //     const cList = document.getElementById('crawlerStatus');
+  //     const iList = document.getElementById('indexerStatus');
+  //     cList.innerHTML = '';
+  //     iList.innerHTML = '';
 
-      Object.entries(crawlers).forEach(([id, status]) => {
-        const li = document.createElement('li');
-        li.textContent = `${id}: ${status}`;
-        li.className = status === 'alive' ? 'text-green-600' : 'text-red-600';
-        cList.appendChild(li);
-      });
-      Object.entries(indexers).forEach(([id, status]) => {
-        const li = document.createElement('li');
-        li.textContent = `${id}: ${status}`;
-        li.className = status === 'alive' ? 'text-green-600' : 'text-red-600';
-        iList.appendChild(li);
-      });
-    } catch (e) {
-      console.error('Monitor error', e);
-    }
-  }
+  //     Object.entries(crawlers).forEach(([id, status]) => {
+  //       const li = document.createElement('li');
+  //       li.textContent = `${id}: ${status}`;
+  //       li.className = status === 'alive' ? 'text-green-600' : 'text-red-600';
+  //       cList.appendChild(li);
+  //     });
+  //     Object.entries(indexers).forEach(([id, status]) => {
+  //       const li = document.createElement('li');
+  //       li.textContent = `${id}: ${status}`;
+  //       li.className = status === 'alive' ? 'text-green-600' : 'text-red-600';
+  //       iList.appendChild(li);
+  //     });
+  //   } catch (e) {
+  //     console.error('Monitor error', e);
+  //   }
+  // }
 
-  // Kick off monitoring polls
-  fetchMonitor();
-  setInterval(fetchMonitor, 5000);
+  // // Kick off monitoring polls
+  // fetchMonitor();
+  // setInterval(fetchMonitor, 5000);
 });

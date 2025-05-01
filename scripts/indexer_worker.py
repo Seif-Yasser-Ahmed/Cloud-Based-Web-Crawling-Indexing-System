@@ -16,15 +16,15 @@ import boto3
 from db import get_connection
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-INDEX_QUEUE_URL   = os.environ['INDEX_TASK_QUEUE']
-MSG_BATCH_SIZE    = int(os.environ.get('MSG_BATCH_SIZE', '5'))
-POLL_WAIT_TIME    = int(os.environ.get('POLL_WAIT_TIME_SEC', '20'))
-SCALE_INTERVAL    = int(os.environ.get('SCALE_INTERVAL_SEC', '30'))
-MIN_THREADS       = int(os.environ.get('MIN_THREADS', '2'))
-MAX_THREADS       = int(os.environ.get('MAX_THREADS', '10'))
+INDEX_QUEUE_URL = os.environ['INDEX_TASK_QUEUE']
+MSG_BATCH_SIZE = int(os.environ.get('MSG_BATCH_SIZE', '5'))
+POLL_WAIT_TIME = int(os.environ.get('POLL_WAIT_TIME_SEC', '20'))
+SCALE_INTERVAL = int(os.environ.get('SCALE_INTERVAL_SEC', '30'))
+MIN_THREADS = int(os.environ.get('MIN_THREADS', '2'))
+MAX_THREADS = int(os.environ.get('MAX_THREADS', '10'))
 VISIBILITY_TIMEOUT = int(os.environ.get('VISIBILITY_TIMEOUT', '120'))
 HEARTBEAT_INTERVAL = VISIBILITY_TIMEOUT // 2
-THREAD_COUNT      = os.environ.get('THREAD_COUNT')
+THREAD_COUNT = os.environ.get('THREAD_COUNT')
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ─── AWS Client ─────────────────────────────────────────────────────────────────
 sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
+
 
 def index_task(msg):
     """
@@ -47,9 +48,9 @@ def index_task(msg):
     6) Acknowledge (delete) the SQS message
     """
     receipt = msg['ReceiptHandle']
-    body    = json.loads(msg['Body'])
-    job_id  = body.get('jobId')
-    page_url= body.get('pageUrl')
+    body = json.loads(msg['Body'])
+    job_id = body.get('jobId')
+    page_url = body.get('pageUrl')
     content = body.get('content')
 
     if not job_id or not page_url:
@@ -58,6 +59,7 @@ def index_task(msg):
 
     # --- Heartbeat thread to keep the message alive ---
     stop_evt = threading.Event()
+
     def heartbeat():
         while not stop_evt.wait(HEARTBEAT_INTERVAL):
             try:
@@ -67,7 +69,8 @@ def index_task(msg):
                     VisibilityTimeout=VISIBILITY_TIMEOUT
                 )
             except Exception:
-                logger.exception("Failed to extend visibility for indexing task")
+                logger.exception(
+                    "Failed to extend visibility for indexing task")
     threading.Thread(target=heartbeat, daemon=True).start()
 
     try:
@@ -112,24 +115,26 @@ def index_task(msg):
         stop_evt.set()
         sqs.delete_message(QueueUrl=INDEX_QUEUE_URL, ReceiptHandle=receipt)
 
+
 def adjust_threads(executor):
     """
     Auto-scale thread pool based on queue backlog.
     """
     try:
-        attrs   = sqs.get_queue_attributes(
+        attrs = sqs.get_queue_attributes(
             QueueUrl=INDEX_QUEUE_URL,
             AttributeNames=['ApproximateNumberOfMessages']
         )['Attributes']
         backlog = int(attrs.get('ApproximateNumberOfMessages', 0))
         # target = 1 thread per 10 messages, bounded
-        target  = min(max(backlog // 10 + 1, MIN_THREADS), MAX_THREADS)
+        target = min(max(backlog // 10 + 1, MIN_THREADS), MAX_THREADS)
         if executor._max_workers != target:
             logger.info("Resizing indexer threads: %d → %d",
                         executor._max_workers, target)
             executor._max_workers = target
     except Exception:
         logger.exception("Failed to adjust indexer thread pool")
+
 
 def main():
     if THREAD_COUNT:
@@ -154,6 +159,7 @@ def main():
             adjust_threads(executor)
 
         time.sleep(SCALE_INTERVAL)
+
 
 if __name__ == '__main__':
     main()
