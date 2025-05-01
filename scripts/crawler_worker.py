@@ -28,7 +28,7 @@ CRAWL_QUEUE_URL = os.environ['CRAWL_QUEUE_URL']
 INDEX_QUEUE_URL = os.environ['INDEX_TASK_QUEUE']
 S3_BUCKET = os.environ.get('S3_BUCKET')
 
-# Concurrency
+# Concurrency settings
 THREAD_COUNT = int(os.environ.get('THREAD_COUNT',
                                   os.environ.get('MAX_THREADS', '5')))
 POLL_WAIT_TIME = int(os.environ.get('POLL_WAIT_TIME_SEC', '5'))
@@ -40,6 +40,7 @@ ALLOW_EXTERNAL = os.environ.get('ALLOW_EXTERNAL', 'false').lower() == 'true'
 
 # Monitoring / identification
 NODE_ID = os.environ.get('NODE_ID') or socket.gethostname()
+# *** Ensure this matches your actual table name ***
 HEARTBEAT_TABLE = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
 ROLE = 'crawler'
 
@@ -60,7 +61,7 @@ job_config_lock = threading.Lock()
 
 
 def update_state(state: str, current_url: str = None):
-    """Insert/update this node's heartbeat record with role, state, and current URL."""
+    """Insert/update this node's heartbeat record in the correct table."""
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -89,7 +90,7 @@ def crawl_task(msg):
         sqs.delete_message(QueueUrl=CRAWL_QUEUE_URL, ReceiptHandle=receipt)
         return
 
-    # mark node as waiting before work
+    # mark node as waiting
     update_state('waiting', None)
 
     # --- SQS visibility heartbeat ---
@@ -200,6 +201,7 @@ def crawl_task(msg):
             if not ALLOW_EXTERNAL and p.netloc != seed_netloc:
                 continue
             children.append(link)
+
         if depth < depth_limit:
             for child in children:
                 sqs.send_message(
@@ -211,7 +213,7 @@ def crawl_task(msg):
                     })
                 )
 
-        logger.info("Crawled %s (depth %d → found %d links)",
+        logger.info("Crawled %s (depth %d → %d links)",
                     url, depth, len(children))
 
     except Exception:
@@ -226,7 +228,7 @@ def crawl_task(msg):
 
 
 def worker_loop():
-    # On start, mark node waiting
+    # On thread start, mark this node waiting
     update_state('waiting', None)
     while True:
         resp = sqs.receive_message(
@@ -241,7 +243,7 @@ def worker_loop():
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    logger.info("Starting %d crawler threads for node %s",
+    logger.info("Starting %d crawler threads on node %s",
                 THREAD_COUNT, NODE_ID)
     for _ in range(THREAD_COUNT):
         t = threading.Thread(target=worker_loop, daemon=True)
