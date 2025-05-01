@@ -156,10 +156,13 @@ def status():
 
     crawlers = {}
     indexers = {}
-    for node_id, role, ts in hb_rows:
-        # ensure ts is numeric
-        ts_val = float(ts)
-        alive = (now - ts_val) < HEARTBEAT_TIMEOUT
+    for row in hb_rows:
+        node_id = row['node_id']
+        role    = row['role']
+        # ts comes back as a string; convert to float
+        ts_val  = float(row['ts'])
+        alive   = (now - ts_val) < HEARTBEAT_TIMEOUT
+
         if role == 'crawler':
             crawlers[node_id] = 'alive' if alive else 'dead'
         else:
@@ -169,7 +172,8 @@ def status():
     def queue_stats(url):
         attrs = sqs.get_queue_attributes(
             QueueUrl=url,
-            AttributeNames=['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible']
+            AttributeNames=['ApproximateNumberOfMessages',
+                            'ApproximateNumberOfMessagesNotVisible']
         )['Attributes']
         return {
             'visible':  int(attrs.get('ApproximateNumberOfMessages', 0)),
@@ -185,7 +189,7 @@ def status():
         'crawlers': crawlers,
         'indexers': indexers,
         'queues':   queues,
-        'threads': {
+        'threads':  {
             'crawler': CRAWLER_THREAD_COUNT,
             'indexer': INDEXER_THREAD_COUNT
         }
