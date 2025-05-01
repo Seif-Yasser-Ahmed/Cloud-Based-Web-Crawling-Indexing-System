@@ -1,21 +1,13 @@
-# master.py
 #!/usr/bin/env python3
 """
-master.py — Flask API for distributed crawler/indexer using RDS + SQS.
-
-Endpoints:
-  GET    /health           — simple OK check
-  POST   /jobs             — start a new crawl job
-  GET    /jobs/<job_id>    — get status & progress for a job
-  GET    /search?query=…   — search indexed pages by term
-  GET    /nodes            — list crawler node statuses (alive/dead)
+master.py — Flask API for distributed crawler/indexer using RDS + SQS,
+with unified heartbeats table for both crawler and indexer health monitoring.
 """
 
 import os
 import json
 import uuid
 import logging
-import threading
 import time
 from datetime import datetime, timezone
 
@@ -27,53 +19,26 @@ from db import get_connection
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
-CRAWL_QUEUE_URL         = os.environ['CRAWL_QUEUE_URL']
-MASTER_PORT             = int(os.environ.get('MASTER_PORT', 5000))
-HEARTBEAT_TABLE         = os.environ.get('HEARTBEAT_TABLE', 'crawler_heartbeats')
-HEARTBEAT_TIMEOUT       = int(os.environ.get('HEARTBEAT_TIMEOUT', 60))
-HEARTBEAT_POLL_INTERVAL = int(os.environ.get('HEARTBEAT_POLL_INTERVAL', 30))
+CRAWL_QUEUE_URL    = os.environ['CRAWL_QUEUE_URL']
+MASTER_PORT        = int(os.environ.get('MASTER_PORT', 5000))
+HEARTBEAT_TABLE    = os.environ.get('HEARTBEAT_TABLE', 'heartbeats')
+HEARTBEAT_TIMEOUT  = int(os.environ.get('HEARTBEAT_TIMEOUT', 60))
 
 # AWS clients
 sqs = boto3.client('sqs', region_name=os.environ.get('AWS_REGION'))
 
 # Flask setup
 app = Flask(__name__)
-CORS(app)  # adjust origins as needed
+CORS(app)  # allow all origins; adjust if needed
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("MASTER")
 
-# In‐memory node status: { node_id: bool(alive) }
-node_status = {}
 
-def heartbeat_monitor():
-    """
-    Background thread that polls the RDS heartbeats table and
-    updates node_status for each crawler node.
-    """
-    while True:
-        time.sleep(HEARTBEAT_POLL_INTERVAL)
-
-        conn = get_connection()
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT node_id, UNIX_TIMESTAMP(last_heartbeat) "
-                "FROM " + HEARTBEAT_TABLE
-            )
-            rows = cur.fetchall()
-        conn.close()
-
-        now = time.time()
-        for node_id, ts in rows:
-            alive = (now - ts) < HEARTBEAT_TIMEOUT
-            node_status[node_id] = alive
-
-        logger.info("Node status → %s", node_status)
-
-# ──────────────────────────────────────────────────────────────────────────────
 @app.route('/health', methods=['GET'])
 def health():
     return 'OK', 200
+
 
 @app.route('/jobs', methods=['POST'])
 def start_job():
@@ -91,6 +56,7 @@ def start_job():
     job_id = str(uuid.uuid4())
     now    = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
+    # Insert into jobs table
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
@@ -100,6 +66,7 @@ def start_job():
         """, (job_id, seed_url, depth_limit, now))
     conn.close()
 
+    # Enqueue initial crawl message
     sqs.send_message(
         QueueUrl=CRAWL_QUEUE_URL,
         MessageBody=json.dumps({
@@ -109,27 +76,32 @@ def start_job():
         })
     )
 
-    node_status.clear()
     logger.info("Started job %s with seed %s", job_id, seed_url)
     return jsonify({'jobId': job_id}), 202
+
 
 @app.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
     conn = get_connection()
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT job_id AS jobId, seed_url AS seedUrl, depth_limit AS depthLimit, "
-            "discovered_count AS discoveredCount, indexed_count AS indexedCount, "
-            "status, created_at AS createdAt "
-            "FROM jobs WHERE job_id = %s",
-            (job_id,)
-        )
+        cur.execute("""
+            SELECT
+              job_id     AS jobId,
+              seed_url   AS seedUrl,
+              depth_limit     AS depthLimit,
+              discovered_count AS discoveredCount,
+              indexed_count    AS indexedCount,
+              status,
+              created_at AS createdAt
+            FROM jobs WHERE job_id = %s
+        """, (job_id,))
         row = cur.fetchone()
     conn.close()
 
     if not row:
         return jsonify({'error': 'Job not found'}), 404
     return jsonify(row), 200
+
 
 @app.route('/search', methods=['GET'])
 def search_index():
@@ -150,15 +122,32 @@ def search_index():
 
     return jsonify(items), 200
 
-@app.route('/nodes', methods=['GET'])
-def list_nodes():
-    return jsonify({nid: ('alive' if alive else 'dead')
-                    for nid, alive in node_status.items()}), 200
 
-# ──────────────────────────────────────────────────────────────────────────────
+@app.route('/status', methods=['GET'])
+def status():
+    """
+    Return the health of crawler and indexer nodes
+    based on last_heartbeat in the unified heartbeats table.
+    """
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            SELECT node_id, role, UNIX_TIMESTAMP(last_heartbeat) AS ts
+              FROM {HEARTBEAT_TABLE}
+        """)
+        rows = cur.fetchall()
+    conn.close()
+
+    now = time.time()
+    status = {'crawlers': {}, 'indexers': {}}
+    for node_id, role, ts in rows:
+        alive = (now - ts) < HEARTBEAT_TIMEOUT
+        key = 'crawlers' if role == 'crawler' else 'indexers'
+        status[key][node_id] = 'alive' if alive else 'dead'
+
+    return jsonify(status), 200
+
+
 if __name__ == '__main__':
-    monitor = threading.Thread(target=heartbeat_monitor, daemon=True)
-    monitor.start()
-
-    logger.info("Master starting on port %d", MASTER_PORT)
+    logger.info("Starting master on port %d", MASTER_PORT)
     app.run(host='0.0.0.0', port=MASTER_PORT, threaded=True)
