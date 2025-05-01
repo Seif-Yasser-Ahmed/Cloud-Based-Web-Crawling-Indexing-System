@@ -56,9 +56,6 @@ class DynamoState:
             ExpressionAttributeValues=vals
         )
 
-    def delete(self, url: str):
-        self.table.delete_item(Key={'url': url})
-
     def claim_crawl(self, url: str, force: bool = False, max_age_secs: int = None) -> bool:
         """
         Attempts to mark this URL as IN_PROGRESS so a crawler can fetch it.
