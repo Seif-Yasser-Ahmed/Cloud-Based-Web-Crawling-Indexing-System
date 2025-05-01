@@ -89,6 +89,7 @@ def crawl_task(msg):
         send_heartbeat('crawler')
 
         # fetch per-job config once
+    # fetch per-job config once
         with config_lock:
             if job_id not in job_config:
                 conn = get_connection()
@@ -97,11 +98,19 @@ def crawl_task(msg):
                         "SELECT depth_limit, seed_url FROM jobs WHERE job_id=%s",
                         (job_id,)
                     )
-                    r = cur.fetchone() or (1,'')
+                    row = cur.fetchone()  # this is a dict now
                 conn.close()
-                dl, su = int(r[0]), r[1]
+    
+                if row:
+                    dl = int(row.get('depth_limit', 1))
+                    su = row.get('seed_url', '')
+                else:
+                    dl, su = 1, ''
+    
                 job_config[job_id] = (dl, urlparse(su).netloc)
+    
         depth_limit, seed_netloc = job_config[job_id]
+
 
         # robots.txt
         p = urlparse(url); origin = f"{p.scheme}://{p.netloc}"
