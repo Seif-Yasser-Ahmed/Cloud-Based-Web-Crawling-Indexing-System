@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-master.py — Flask API for distributed crawler/indexer with real-time monitoring.
+master.py — Flask API for distributed crawler/indexer with real-time monitoring
+and multi-word search support.
 
 Endpoints:
   GET    /health           — simple OK check
   POST   /jobs             — start a new crawl job
   GET    /jobs/<job_id>    — get status & progress for a job
-  GET    /search           — search indexed pages by term
-  GET    /nodes            — list crawler node liveness (alive/dead)
+  GET    /search           — search indexed pages by terms (AND semantics)
+  GET    /nodes            — list node liveness (alive/dead)
   GET    /monitor          — detailed node monitor (role, state, current URL)
 """
 
@@ -57,7 +58,7 @@ def heartbeat_monitor():
                 f"SELECT node_id, UNIX_TIMESTAMP(last_heartbeat) AS ts "
                 f"FROM {HEARTBEAT_TABLE}"
             )
-            rows = cur.fetchall()  # expects list of dicts with 'node_id' and 'ts'
+            rows = cur.fetchall()
         conn.close()
 
         now = time.time()
@@ -66,9 +67,7 @@ def heartbeat_monitor():
             last_ts = r['ts']
             node_status[node_id] = (now - last_ts) < HEARTBEAT_TIMEOUT
 
-        logger.info("Heartbeat monitor updated node_status: %s", node_status)
-
-# ──────────────────────────────────────────────────────────────────────────────
+        logger.debug("Heartbeat refreshed: %s", node_status)
 
 
 @app.route('/health', methods=['GET'])
@@ -122,14 +121,15 @@ def get_job_status(job_id):
     with conn.cursor() as cur:
         cur.execute("""
             SELECT
-              job_id AS jobId,
-              seed_url AS seedUrl,
-              depth_limit AS depthLimit,
+              job_id           AS jobId,
+              seed_url         AS seedUrl,
+              depth_limit      AS depthLimit,
               discovered_count AS discoveredCount,
-              indexed_count AS indexedCount,
+              indexed_count    AS indexedCount,
               status,
-              created_at AS createdAt
-            FROM jobs WHERE job_id = %s
+              created_at       AS createdAt
+            FROM jobs
+            WHERE job_id = %s
         """, (job_id,))
         row = cur.fetchone()
     conn.close()
@@ -141,19 +141,46 @@ def get_job_status(job_id):
 
 @app.route('/search', methods=['GET'])
 def search_index():
-    term = request.args.get('query', '').strip().lower()
-    if not term:
+    """
+    Search indexed pages by one or more terms.
+    Single-term: direct lookup.
+    Multi-term: AND search, pages must contain all terms,
+    ordered by total frequency.
+    """
+    query = request.args.get('query', '').strip().lower()
+    if not query:
         return jsonify([]), 200
 
+    terms = query.split()
     conn = get_connection()
     with conn.cursor() as cur:
-        cur.execute("""
-            SELECT page_url AS pageUrl, frequency
-              FROM index_entries
-             WHERE term = %s
-             ORDER BY frequency DESC
-        """, (term,))
-        results = cur.fetchall()
+        if len(terms) == 1:
+            cur.execute("""
+                SELECT page_url AS pageUrl, frequency
+                  FROM index_entries
+                 WHERE term = %s
+                 ORDER BY frequency DESC
+            """, (terms[0],))
+            rows = cur.fetchall()
+            results = [{'pageUrl': r['pageUrl'],
+                        'frequency': r['frequency']} for r in rows]
+        else:
+            placeholders = ','.join(['%s'] * len(terms))
+            sql = f"""
+                SELECT page_url AS pageUrl,
+                       SUM(frequency)       AS frequency,
+                       COUNT(DISTINCT term) AS matches
+                  FROM index_entries
+                 WHERE term IN ({placeholders})
+                 GROUP BY page_url
+                HAVING matches = %s
+                 ORDER BY frequency DESC
+            """
+            params = terms + [len(terms)]
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            results = [{'pageUrl': r['pageUrl'],
+                        'frequency': r['frequency']} for r in rows]
     conn.close()
 
     return jsonify(results), 200
@@ -161,7 +188,6 @@ def search_index():
 
 @app.route('/nodes', methods=['GET'])
 def list_nodes():
-    """Return simple alive/dead status per node."""
     return jsonify({
         nid: 'alive' if alive else 'dead'
         for nid, alive in node_status.items()
@@ -172,7 +198,7 @@ def list_nodes():
 def monitor():
     """
     Return detailed status for each node:
-    nodeId, role, alive (bool), state, currentUrl.
+    nodeId, role, alive, state, currentUrl.
     """
     conn = get_connection()
     with conn.cursor() as cur:
@@ -198,10 +224,7 @@ def monitor():
     return jsonify(data), 200
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    # Launch heartbeat monitor
     threading.Thread(target=heartbeat_monitor, daemon=True).start()
-
     logger.info("Master starting on port %d", MASTER_PORT)
     app.run(host='0.0.0.0', port=MASTER_PORT, threaded=True)
