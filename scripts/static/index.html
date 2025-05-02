@@ -30,6 +30,13 @@
 </head>
 
 <body>
+    <h2>Search Index</h2>
+    <input type="text" id="searchQuery" placeholder="Search terms…" style="width:300px" />
+    <button id="searchBtn">Search</button>
+    <ul id="searchResults"></ul>
+
+
+
     <h1>Cluster Monitor</h1>
     <button id="refresh">Refresh</button>
     <table>
@@ -68,9 +75,15 @@
                     ? JSON.stringify(data, null, 2)
                     : `Error: ${JSON.stringify(data)}`;
         };
-    </script>
 
-    <script>
+        document.getElementById('searchBtn').onclick = async () => {
+            const q = encodeURIComponent(document.getElementById('searchQuery').value);
+            const res = await fetch(`/search?query=${q}`);
+            const data = await res.json();
+            const ul = document.getElementById('searchResults');
+            ul.innerHTML = data.map(r => `<li><a href="${r.pageUrl}" target="_blank">${r.pageUrl}</a> (${r.frequency})</li>`).join('');
+        };
+
         document.getElementById('jobForm').onsubmit = async e => {
             e.preventDefault();
             const url = document.getElementById('seedUrl').value;
