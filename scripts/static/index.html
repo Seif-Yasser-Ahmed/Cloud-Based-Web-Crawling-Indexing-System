@@ -52,6 +52,24 @@
     </form>
     <pre id="jobResult"></pre>
 
+    <h2>Check Job Status</h2>
+    <input type="text" id="checkJobId" placeholder="Job ID" style="width:300px" />
+    <button id="checkBtn">Check</button>
+    <pre id="statusResult"></pre>
+
+    <script>
+        document.getElementById('checkBtn').onclick = async () => {
+            const id = document.getElementById('checkJobId').value;
+            if (!id) return alert('Enter a Job ID');
+            const res = await fetch(`/jobs/${id}`);
+            const data = await res.json();
+            document.getElementById('statusResult').textContent =
+                res.ok
+                    ? JSON.stringify(data, null, 2)
+                    : `Error: ${JSON.stringify(data)}`;
+        };
+    </script>
+
     <script>
         document.getElementById('jobForm').onsubmit = async e => {
             e.preventDefault();
