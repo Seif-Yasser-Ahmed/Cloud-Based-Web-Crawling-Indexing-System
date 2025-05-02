@@ -1,7 +1,8 @@
 // app.js
 
 // Your Master API base (include protocol, domain, and port)
-const API_BASE = 'http://ec2-51-20-123-87.eu-north-1.compute.amazonaws.com:5000';
+const API_BASE = 'http://ec2-51-20-108-138.eu-north-1.compute.amazonaws.com:5000';
+console.log('API_BASE:', API_BASE);
 
 document.addEventListener('DOMContentLoaded', () => {
   // Elements
