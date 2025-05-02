@@ -143,7 +143,7 @@ def search_index():
             include.append(p)
         i += 1
 
-    # stem all terms & phrases
+    # stem all terms & phrasess
     terms = [stemmer.stem(w) for w in include]
     term_phrases = []
     for ph in phrases:
