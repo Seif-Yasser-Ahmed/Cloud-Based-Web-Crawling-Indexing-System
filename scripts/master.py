@@ -39,6 +39,12 @@ stemmer = PorterStemmer()
 node_status = {}
 
 
+@app.route('/')
+def home():
+    # send index.html from the static directory
+    return app.send_static_file('index.html')
+
+
 def heartbeat_monitor():
     while True:
         time.sleep(HEARTBEAT_POLL_INTERVAL)

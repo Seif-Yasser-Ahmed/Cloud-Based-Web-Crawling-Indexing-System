@@ -1,0 +1,70 @@
+<!-- Puplic_Project/static/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Crawler Dashboard</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 2rem;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th,
+        td {
+            border: 1px solid #ccc;
+            padding: .5rem;
+            text-align: left;
+        }
+
+        th {
+            background: #f4f4f4;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Cluster Monitor</h1>
+    <button id="refresh">Refresh</button>
+    <table>
+        <thead>
+            <tr>
+                <th>Node</th>
+                <th>Role</th>
+                <th>State</th>
+                <th>Current URL</th>
+                <th>Alive?</th>
+            </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+    </table>
+    <script>
+        async function load() {
+            const res = await fetch('/monitor');
+            const data = await res.json();
+            const tbody = document.getElementById('rows');
+            tbody.innerHTML = '';
+            data.forEach(n => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+          <td>${n.nodeId}</td>
+          <td>${n.role}</td>
+          <td>${n.state}</td>
+          <td>${n.currentUrl || ''}</td>
+          <td>${n.alive ? '✅' : '❌'}</td>
+        `;
+                tbody.appendChild(tr);
+            });
+        }
+        document.getElementById('refresh').onclick = load;
+        load();
+    </script>
+</body>
+
+</html>
