@@ -41,7 +41,7 @@ node_status = {}
 
 @app.route('/')
 def home():
-    # send index.html from the static directory
+    # send index.html from the static directorys
     return app.send_static_file('index.html')
 
 
