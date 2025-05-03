@@ -1,4 +1,3 @@
-<!-- Puplic_Project/static/index.html -->
 <!DOCTYPE html>
 <html lang="en">
 
@@ -7,75 +6,222 @@
     <title>Crawler Dashboard</title>
     <style>
         body {
-            font-family: sans-serif;
-            padding: 2rem;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f9f9f9;
+            color: #333;
+        }
+
+        header,
+        main {
+            padding: 1rem 2rem;
+        }
+
+        header {
+            background: #004080;
+            color: white;
+            display: flex;
+            align-items: center;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 1.8rem;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .card h3 {
+            margin: 0 0 .5rem;
+            font-size: 1.1rem;
+            color: #004080;
+        }
+
+        .card p {
+            margin: 0;
+            font-size: 2rem;
+            font-weight: bold;
+        }
+
+        section {
+            margin-bottom: 2rem;
         }
 
         table {
-            border-collapse: collapse;
             width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 2rem;
         }
 
         th,
         td {
-            border: 1px solid #ccc;
-            padding: .5rem;
+            border: 1px solid #ddd;
+            padding: 0.5rem;
             text-align: left;
         }
 
         th {
-            background: #f4f4f4;
+            background: #e0e0e0;
+        }
+
+        form,
+        .search-section,
+        .status-section {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 1.5rem;
+        }
+
+        input,
+        button {
+            padding: 0.5rem;
+            font-size: 1rem;
+            margin-right: 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        button {
+            background: #004080;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #003060;
+        }
+
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        ul li {
+            margin-bottom: 0.5rem;
+        }
+
+        a {
+            color: #004080;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
 
 <body>
-    <h2>Search Index</h2>
-    <input type="text" id="searchQuery" placeholder="Search terms…" style="width:300px" />
-    <button id="searchBtn">Search</button>
-    <ul id="searchResults"></ul>
+    <header>
+        <h1>Crawler & Indexer Dashboard</h1>
+    </header>
 
+    <main>
+        <!-- Metrics Cards -->
+        <section>
+            <h2>Live Metrics</h2>
+            <div class="metrics-grid">
+                <div class="card">
+                    <h3>Crawler ASG Instances</h3>
+                    <p id="crawler-asg-count">—</p>
+                </div>
+                <div class="card">
+                    <h3>Indexer ASG Instances</h3>
+                    <p id="indexer-asg-count">—</p>
+                </div>
+                <div class="card">
+                    <h3>Dashboard Instance Count</h3>
+                    <p id="lb-healthy-count">—</p>
+                </div>
+                <div class="card">
+                    <h3>Requests per Instance</h3>
+                    <p id="lb-req-per-target">—</p>
+                </div>
+            </div>
+        </section>
 
+        <!-- Search Section -->
+        <section class="search-section">
+            <h2>Search Index</h2>
+            <input type="text" id="searchQuery" placeholder="Search terms…" />
+            <button id="searchBtn">Search</button>
+            <ul id="searchResults"></ul>
+        </section>
 
-    <h1>Cluster Monitor</h1>
-    <button id="refresh">Refresh</button>
-    <table>
-        <thead>
-            <tr>
-                <th>Node</th>
-                <th>Role</th>
-                <th>State</th>
-                <th>Current URL</th>
-                <th>Alive?</th>
-            </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-    </table>
-    <h2>Start Crawl Job</h2>
-    <form id="jobForm">
-        <input type="url" id="seedUrl" placeholder="Seed URL" required style="width:300px" />
-        <input type="number" id="depthLimit" placeholder="Depth (1–5)" min="1" max="5" value="2" />
-        <button type="submit">Go</button>
-    </form>
-    <pre id="jobResult"></pre>
+        <!-- Cluster Monitor -->
+        <section>
+            <h2>Cluster Monitor</h2>
+            <button id="refresh">Refresh</button>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>Role</th>
+                        <th>State</th>
+                        <th>Current URL</th>
+                        <th>Alive?</th>
+                    </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+            </table>
+        </section>
 
-    <h2>Check Job Status</h2>
-    <input type="text" id="checkJobId" placeholder="Job ID" style="width:300px" />
-    <button id="checkBtn">Check</button>
-    <pre id="statusResult"></pre>
+        <!-- Start Job -->
+        <section class="form-section">
+            <h2>Start Crawl Job</h2>
+            <form id="jobForm">
+                <input type="url" id="seedUrl" placeholder="Seed URL" required />
+                <input type="number" id="depthLimit" placeholder="Depth (1–5)" min="1" max="5" value="2" />
+                <button type="submit">Start</button>
+            </form>
+            <pre id="jobResult"></pre>
+        </section>
+
+        <!-- Check Job Status -->
+        <section class="status-section">
+            <h2>Check Job Status</h2>
+            <input type="text" id="checkJobId" placeholder="Job ID" />
+            <button id="checkBtn">Check</button>
+            <pre id="statusResult"></pre>
+        </section>
+    </main>
 
     <script>
-        document.getElementById('checkBtn').onclick = async () => {
-            const id = document.getElementById('checkJobId').value;
-            if (!id) return alert('Enter a Job ID');
-            const res = await fetch(`/jobs/${id}`);
-            const data = await res.json();
-            document.getElementById('statusResult').textContent =
-                res.ok
-                    ? JSON.stringify(data, null, 2)
-                    : `Error: ${JSON.stringify(data)}`;
-        };
+        // Fetch ASG and LB metrics
+        async function loadMetrics() {
+            try {
+                const asgRes = await fetch('/metrics/asg');
+                const asgData = await asgRes.json();
+                document.getElementById('crawler-asg-count').textContent = asgData[Object.keys(asgData)[0]].slice(-1)[0]?.value || '0';
+                document.getElementById('indexer-asg-count').textContent = asgData[Object.keys(asgData)[1]].slice(-1)[0]?.value || '0';
 
+                const lbRes = await fetch('/metrics/lb');
+                const lbData = await lbRes.json();
+                document.getElementById('lb-healthy-count').textContent = lbData.HealthyHostCount.slice(-1)[0]?.value || '0';
+                document.getElementById('lb-req-per-target').textContent = lbData.RequestCountPerTarget.slice(-1)[0]?.value.toFixed(1) || '0';
+            } catch (e) {
+                console.error('Error loading metrics', e);
+            }
+        }
+
+        // Existing functions
         document.getElementById('searchBtn').onclick = async () => {
             const q = encodeURIComponent(document.getElementById('searchQuery').value);
             const res = await fetch(`/search?query=${q}`);
@@ -84,22 +230,7 @@
             ul.innerHTML = data.map(r => `<li><a href="${r.pageUrl}" target="_blank">${r.pageUrl}</a> (${r.frequency})</li>`).join('');
         };
 
-        document.getElementById('jobForm').onsubmit = async e => {
-            e.preventDefault();
-            const url = document.getElementById('seedUrl').value;
-            const depth = document.getElementById('depthLimit').value;
-            const res = await fetch('/jobs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ seedUrl: url, depthLimit: depth })
-            });
-            const data = await res.json();
-            document.getElementById('jobResult').textContent =
-                res.ok
-                    ? `Job started: ${data.jobId}`
-                    : `Error: ${JSON.stringify(data)}`;
-        };
-        async function load() {
+        async function loadMonitor() {
             const res = await fetch('/monitor');
             const data = await res.json();
             const tbody = document.getElementById('rows');
@@ -116,8 +247,36 @@
                 tbody.appendChild(tr);
             });
         }
-        document.getElementById('refresh').onclick = load;
-        load();
+
+        document.getElementById('refresh').onclick = () => {
+            loadMonitor();
+            loadMetrics();
+        };
+
+        document.getElementById('jobForm').onsubmit = async e => {
+            e.preventDefault();
+            const url = document.getElementById('seedUrl').value;
+            const depth = document.getElementById('depthLimit').value;
+            const res = await fetch('/jobs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ seedUrl: url, depthLimit: depth })
+            });
+            const data = await res.json();
+            document.getElementById('jobResult').textContent = res.ok ? `Job started: ${data.jobId}` : `Error: ${JSON.stringify(data)}`;
+        };
+
+        document.getElementById('checkBtn').onclick = async () => {
+            const id = document.getElementById('checkJobId').value;
+            if (!id) return alert('Enter a Job ID');
+            const res = await fetch(`/jobs/${id}`);
+            const data = await res.json();
+            document.getElementById('statusResult').textContent = res.ok ? JSON.stringify(data, null, 2) : `Error: ${JSON.stringify(data)}`;
+        };
+
+        // Initial load
+        loadMonitor();
+        loadMetrics();
     </script>
 </body>
 
