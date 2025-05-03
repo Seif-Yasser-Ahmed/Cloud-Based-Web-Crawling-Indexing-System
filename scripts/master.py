@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 master.py — Flask API for distributed crawler/indexer with enhanced
-boolean & phrase search, plus real-time monitoring and AWS metrics.
+boolean & phrase search, plus real-time monitoring and AWS metricss.
 """
 
 import os
