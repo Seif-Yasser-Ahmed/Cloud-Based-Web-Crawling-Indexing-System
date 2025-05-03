@@ -1,4 +1,4 @@
-# updated master.py with CloudWatch metric endpoints
+# updated master.py with CloudWatch metric endpoints and re-added heartbeat_monitor
 #!/usr/bin/env python3
 """
 master.py — Flask API for distributed crawler/indexer with enhanced
@@ -44,6 +44,26 @@ logger = logging.getLogger(__name__)
 stemmer = PorterStemmer()
 
 node_status = {}
+
+# Re-added heartbeat monitor function
+
+
+def heartbeat_monitor():
+    while True:
+        time.sleep(HEARTBEAT_POLL_INTERVAL)
+        try:
+            conn = get_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT node_id, UNIX_TIMESTAMP(last_heartbeat) AS ts FROM {HEARTBEAT_TABLE}"
+                )
+                rows = cur.fetchall()
+            conn.close()
+            now = time.time()
+            for r in rows:
+                node_status[r['node_id']] = (now - r['ts']) < HEARTBEAT_TIMEOUT
+        except Exception as e:
+            logger.error(f"Heartbeat monitor error: {e}")
 
 
 @app.route('/')
@@ -181,8 +201,6 @@ def monitor():
         })
     return jsonify(data), 200
 
-# New endpoint: ASG metrics
-
 
 @app.route('/metrics/asg')
 def metrics_asg():
@@ -199,8 +217,6 @@ def metrics_asg():
         result[asg] = [{'timestamp': dp['Timestamp'].isoformat(
         ), 'value': dp['Average']} for dp in dps]
     return jsonify(result), 200
-
-# New endpoint: Load Balancer metrics
 
 
 @app.route('/metrics/lb')
