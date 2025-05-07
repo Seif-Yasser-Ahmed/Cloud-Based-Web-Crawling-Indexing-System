@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+    <title>Distributed Crawler</title>
+</head>
+
+<body class="bg-gray-100 text-gray-800">
+    <div class="max-w-4xl mx-auto p-6">
+        <h1 class="text-3xl font-bold mb-6 text-center">Distributed Crawler</h1>
+
+        <!-- Crawl controls -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <div class="mb-4">
+                <label for="seedUrl" class="block text-sm font-medium text-gray-700">Seed URL</label>
+                <input id="seedUrl" type="text" placeholder="https://example.com"
+                    class="mt-1 block w-full px-3 py-2 border rounded-md" />
+            </div>
+            <div class="mb-4">
+                <label for="depth" class="block text-sm font-medium text-gray-700">Depth</label>
+                <input id="depth" type="number" min="1" value="2" class="mt-1 block w-24 px-3 py-2 border rounded-md" />
+            </div>
+            <button id="startBtn" class="w-full bg-indigo-600 text-white py-2 rounded-md hover:bg-indigo-700">
+                Start Crawl
+            </button>
+        </div>
+
+        <!-- Status display -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-2">Status</h2>
+            <p id="statusText">No job started.</p>
+        </div>
+
+        <!-- Search controls -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <div class="mb-4">
+                <label for="searchQuery" class="block text-sm font-medium text-gray-700">
+                    Search Indexed Pages
+                </label>
+                <input id="searchQuery" type="text" placeholder="Enter search term"
+                    class="mt-1 block w-full px-3 py-2 border rounded-md" />
+            </div>
+            <button id="searchBtn" class="w-full bg-green-600 text-white py-2 rounded-md hover:bg-green-700">
+                Search
+            </button>
+        </div>
+
+        <!-- Search Results -->
+        <div id="results" class="space-y-4 mb-6"></div>
+
+        <!-- Monitoring panel -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">Node Monitoring</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-2 border-b">Node ID</th>
+                            <th class="px-4 py-2 border-b">Role</th>
+                            <th class="px-4 py-2 border-b">Status</th>
+                            <th class="px-4 py-2 border-b">State</th>
+                            <th class="px-4 py-2 border-b">Current URL</th>
+                        </tr>
+                    </thead>
+                    <tbody id="monitorBody" class="bg-white">
+                        <!-- Filled dynamically by app.js -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
