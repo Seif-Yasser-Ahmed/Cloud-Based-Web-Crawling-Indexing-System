@@ -188,20 +188,24 @@
         };
 
         document.getElementById('jobForm').onsubmit = async e => {
-            e.preventDefault();
-            const url = document.getElementById('seedUrl').value;
-            const depth = document.getElementById('depthLimit').value;
-            const res = await fetch('/jobs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ seedUrl: url, depthLimit: depth })
-            });
-            const data = await res.json();
-            document.getElementById('jobResult').textContent =
-                res.ok
-                    ? `Job started: ${data.jobId}`
-                    : `Error: ${JSON.stringify(data)}`;
-        };
+                e.preventDefault();
+
+                const form = document.getElementById('jobForm');
+                const formData = new FormData(form);
+
+                const res = await fetch('/jobs', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await res.json();
+                const output = document.getElementById('jobResult');
+                if (res.ok) {
+                    output.textContent = `Jobs started: ${data.jobIds.join(', ')}`;
+                } else {
+                    output.textContent = `Error: ${JSON.stringify(data)}`;
+                }
+            };
 
         async function load() {
             const res = await fetch('/monitor');

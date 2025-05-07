@@ -78,27 +78,66 @@ def health():
 
 @app.route('/jobs', methods=['POST'])
 def start_job():
-    data = request.get_json(force=True)
-    seed_url = data.get('seedUrl')
-    if not seed_url:
-        return jsonify({'error': 'Missing seedUrl'}), 400
+    # 1) Parse & clamp depthLimit
     try:
-        depth_limit = int(data.get('depthLimit', 2))
-    except:
-        return jsonify({'error': 'depthLimit must be int'}), 400
+        depth_limit = int(request.form.get('depthLimit', 2))
+    except ValueError:
+        return jsonify({'error': 'depthLimit must be an integer'}), 400
     depth_limit = max(1, min(depth_limit, 5))
-    job_id = str(uuid.uuid4())
+
+    # 2) Read manual URLs from textarea
+    seed_text = request.form.get('seedUrls', '')
+    manual_urls = [
+        u.strip()
+        for u in seed_text.splitlines()
+        if u.strip()
+    ]
+
+    # 3) Read URLs from uploaded file (if any)
+    file = request.files.get('urlFile')
+    file_urls = []
+    if file:
+        content = file.read().decode('utf-8')
+        file_urls = [
+            u.strip()
+            for u in content.splitlines()
+            if u.strip()
+        ]
+
+    # 4) Combine & dedupe
+    urls = list(dict.fromkeys(manual_urls + file_urls))
+    if not urls:
+        return jsonify({'error': 'No seed URLs provided'}), 400
+
+    # 5) Insert one job per URL & push to SQS
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     conn = get_connection()
+    job_ids = []
     with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO jobs (job_id, seed_url, depth_limit, created_at)
-            VALUES (%s,%s,%s,%s)""", (job_id, seed_url, depth_limit, now))
+        for url in urls:
+            job_id = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO jobs (job_id, seed_url, depth_limit, created_at)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (job_id, url, depth_limit, now)
+            )
+            sqs.send_message(
+                QueueUrl=CRAWL_QUEUE_URL,
+                MessageBody=json.dumps({
+                    'jobId': job_id,
+                    'url': url,
+                    'depth': 0
+                })
+            )
+            job_ids.append(job_id)
+    conn.commit()
     conn.close()
-    sqs.send_message(QueueUrl=CRAWL_QUEUE_URL, MessageBody=json.dumps(
-        {'jobId': job_id, 'url': seed_url, 'depth': 0}))
+
+    # 6) Clear node status and respond
     node_status.clear()
-    return jsonify({'jobId': job_id}), 202
+    return jsonify({'jobIds': job_ids}), 202
 
 
 @app.route('/jobs/<job_id>')
