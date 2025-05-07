@@ -65,6 +65,12 @@
             list-style: disc;
         }
 
+        #paginationControls {
+            margin-top: 1rem;
+            display: flex;
+            gap: 0.5rem;
+        }
+
         #adminSection {
             margin-top: 2rem;
             animation: fadeIn 0.5s ease-in-out;
@@ -110,29 +116,34 @@
     <input type="text" id="searchQuery" placeholder="Search terms…" style="width:300px" />
     <button id="searchBtn">Search</button>
     <ul id="searchResults"></ul>
+    <div id="paginationControls" class="hidden">
+        <button id="prevPage">Prev</button>
+        <span id="pageInfo"></span>
+        <button id="nextPage">Next</button>
+    </div>
 
-<div class="section">
-    <h2>Start Crawl Job</h2>
-    <form id="jobForm" enctype="multipart/form-data">
-        <textarea id="seedUrls" placeholder="Enter one URL per line" name="seedUrls" required
-            style="width:100%; height:120px; padding:0.75rem; border:1px solid #ccc; border-radius:4px; 
-            font-family:'Segoe UI', sans-serif; font-size:1rem; resize:none; 
-            box-shadow:inset 0 1px 3px rgba(0,0,0,0.1); transition:border-color 0.3s ease; 
-            outline:none; overflow-y: auto; box-sizing: border-box; max-width: 100%; 
-            margin: 0 0 10px 0;"></textarea>
+    <div class="section">
+        <h2>Start Crawl Job</h2>
+        <form id="jobForm" enctype="multipart/form-data">
+            <textarea id="seedUrls" placeholder="Enter one URL per line" name="seedUrls" required style="width:100%; height:120px; padding:0.75rem; border:1px solid #ccc; border-radius:4px; 
+                font-family:'Segoe UI', sans-serif; font-size:1rem; resize:none; 
+                box-shadow:inset 0 1px 3px rgba(0,0,0,0.1); transition:border-color 0.3s ease; 
+                outline:none; overflow-y: auto; box-sizing: border-box; max-width: 100%; 
+                margin: 0 0 10px 0;"></textarea>
 
-        <input type="file" id="urlFile" accept=".txt" name="urlFile" style="margin-top:8px" />
+            <input type="file" id="urlFile" accept=".txt" name="urlFile" style="margin-top:8px" />
 
-        <br />
+            <br />
 
-        <label for="depthLimit">Depth:</label>
-        <input type="number" name="depthLimit" id="depthLimit" placeholder="1–5" min="1" max="5" value="2" style="width:60px" required />
+            <label for="depthLimit">Depth:</label>
+            <input type="number" name="depthLimit" id="depthLimit" placeholder="1–5" min="1" max="5" value="2"
+                style="width:60px" required />
 
-        <button type="submit">Go</button>
-    </form>
+            <button type="submit">Go</button>
+        </form>
 
-    <pre id="jobResult"></pre>
-</div>
+        <pre id="jobResult"></pre>
+    </div>
 
     <h2>Admin Access</h2>
     <label>
@@ -163,6 +174,63 @@
     </div>
 
     <script>
+        // Utility for rendering paginated results
+        let allResults = [];
+        let currentPage = 1;
+        const pageSize = 20;
+
+        function renderResults() {
+            const ul = document.getElementById('searchResults');
+            const pagination = document.getElementById('paginationControls');
+            const pageInfo = document.getElementById('pageInfo');
+
+            const total = allResults.length;
+            const totalPages = Math.ceil(total / pageSize) || 1;
+            currentPage = Math.min(Math.max(currentPage, 1), totalPages);
+
+            // slice results
+            const start = (currentPage - 1) * pageSize;
+            const end = start + pageSize;
+            const pageData = allResults.slice(start, end);
+
+            ul.innerHTML = pageData.map(r =>
+                `<li><a href="${r.pageUrl}" target="_blank">${r.pageUrl}</a> (${r.frequency})</li>`
+            ).join('');
+
+            // update pagination controls
+            pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+            pagination.classList.toggle('hidden', total <= pageSize);
+        }
+
+        document.getElementById('prevPage').onclick = () => {
+            currentPage--;
+            renderResults();
+        };
+        document.getElementById('nextPage').onclick = () => {
+            currentPage++;
+            renderResults();
+        };
+
+        // Search on button click or Enter key
+        async function doSearch() {
+            const q = encodeURIComponent(document.getElementById('searchQuery').value.trim());
+            if (!q) return;
+            const res = await fetch(`/search?query=${q}`);
+            const data = await res.json();
+            allResults = data;
+            currentPage = 1;
+            renderResults();
+        }
+
+        document.getElementById('searchBtn').onclick = doSearch;
+        document.getElementById('searchQuery').addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                doSearch();
+            }
+        });
+
+        // Other handlers...
         document.getElementById('adminCheckbox').onchange = function () {
             const adminSection = document.getElementById('adminSection');
             adminSection.classList.toggle('hidden', !this.checked);
@@ -179,40 +247,32 @@
                     : `Error: ${JSON.stringify(data)}`;
         };
 
-        document.getElementById('searchBtn').onclick = async () => {
-            const q = encodeURIComponent(document.getElementById('searchQuery').value);
-            const res = await fetch(`/search?query=${q}`);
-            const data = await res.json();
-            const ul = document.getElementById('searchResults');
-            ul.innerHTML = data.map(r => `<li><a href="${r.pageUrl}" target="_blank">${r.pageUrl}</a> (${r.frequency})</li>`).join('');
+        document.getElementById('jobForm').onsubmit = async e => {
+            e.preventDefault();
+
+            const form = document.getElementById('jobForm');
+            const output = document.getElementById('jobResult');
+            const formData = new FormData(form);
+
+            try {
+                const res = await fetch('/jobs', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    const ids = Array.isArray(data.jobIds) ? data.jobIds : [];
+                    output.textContent = `Jobs started: ${ids.join(', ')}`;
+                } else {
+                    output.textContent = `Error: ${data.error || JSON.stringify(data)}`;
+                }
+            } catch (err) {
+                output.textContent = `Network error: ${err.message}`;
+            }
         };
 
-        document.getElementById('jobForm').onsubmit = async e => {
-                e.preventDefault();
-
-                const form = document.getElementById('jobForm');
-                const output = document.getElementById('jobResult');
-                const formData = new FormData(form);
-
-                try {
-                    const res = await fetch('/jobs', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    const data = await res.json();
-
-                    if (res.ok) {
-                        const ids = Array.isArray(data.jobIds) ? data.jobIds : [];
-                        output.textContent = `Jobs started: ${ids.join(', ')}`;
-                    } else {
-                        output.textContent = `Error: ${data.error || JSON.stringify(data)}`;
-                    }
-                } catch (err) {
-                    output.textContent = `Network error: ${err.message}`;
-                }
-            };
-
-
+        // Cluster monitor
         async function load() {
             const res = await fetch('/monitor');
             const data = await res.json();
@@ -221,12 +281,12 @@
             data.forEach(n => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-            <td>${n.nodeId}</td>
-            <td>${n.role}</td>
-            <td>${n.state}</td>
-            <td>${n.currentUrl || ''}</td>
-            <td>${n.alive ? '✅' : '❌'}</td>
-          `;
+                    <td>${n.nodeId}</td>
+                    <td>${n.role}</td>
+                    <td>${n.state}</td>
+                    <td>${n.currentUrl || ''}</td>
+                    <td>${n.alive ? '✅' : '❌'}</td>
+                `;
                 tbody.appendChild(tr);
             });
         }
