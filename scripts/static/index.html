@@ -1,4 +1,3 @@
-<!-- Puplic_Project/static/index.htmls -->
 <!DOCTYPE html>
 <html lang="en">
 
@@ -7,13 +6,41 @@
     <title>Crawler Dashboard</title>
     <style>
         body {
-            font-family: sans-serif;
+            font-family: 'Segoe UI', sans-serif;
+            background: #f9f9f9;
+            color: #333;
             padding: 2rem;
+        }
+
+        h1,
+        h2 {
+            color: #0077cc;
+        }
+
+        input,
+        button {
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+        }
+
+        button {
+            background-color: #0077cc;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #005fa3;
         }
 
         table {
             border-collapse: collapse;
             width: 100%;
+            margin-top: 1rem;
         }
 
         th,
@@ -24,7 +51,56 @@
         }
 
         th {
-            background: #f4f4f4;
+            background: #eef6fb;
+        }
+
+        tr:hover {
+            background-color: #f1f9ff;
+            transition: background-color 0.3s ease-in-out;
+        }
+
+        ul#searchResults {
+            margin-top: 0.5rem;
+            padding-left: 1rem;
+            list-style: disc;
+        }
+
+        #adminSection {
+            margin-top: 2rem;
+            animation: fadeIn 0.5s ease-in-out;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        pre {
+            background-color: #f4f4f4;
+            padding: 1rem;
+            border-radius: 5px;
+            overflow: auto;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .section {
+            margin-top: 2rem;
+            padding: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #ffffff;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            animation: fadeIn 0.4s ease;
         }
     </style>
 </head>
@@ -35,36 +111,50 @@
     <button id="searchBtn">Search</button>
     <ul id="searchResults"></ul>
 
+    <div class="section">
+        <h2>Start Crawl Job</h2>
+        <form id="jobForm">
+            <input type="url" id="seedUrl" placeholder="Seed URL" required style="width:300px" />
+            <input type="number" id="depthLimit" placeholder="Depth (1–5)" min="1" max="5" value="2" />
+            <button type="submit">Go</button>
+        </form>
+        <pre id="jobResult"></pre>
+    </div>
 
+    <h2>Admin Access</h2>
+    <label>
+        <input type="checkbox" id="adminCheckbox" />
+        Admin
+    </label>
 
-    <h1>Cluster Monitor</h1>
-    <button id="refresh">Refresh</button>
-    <table>
-        <thead>
-            <tr>
-                <th>Node</th>
-                <th>Role</th>
-                <th>State</th>
-                <th>Current URL</th>
-                <th>Alive?</th>
-            </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-    </table>
-    <h2>Start Crawl Job</h2>
-    <form id="jobForm">
-        <input type="url" id="seedUrl" placeholder="Seed URL" required style="width:300px" />
-        <input type="number" id="depthLimit" placeholder="Depth (1–5)" min="1" max="5" value="2" />
-        <button type="submit">Go</button>
-    </form>
-    <pre id="jobResult"></pre>
+    <div id="adminSection" class="hidden section">
+        <h1>Cluster Monitor</h1>
+        <button id="refresh">Refresh</button>
+        <table>
+            <thead>
+                <tr>
+                    <th>Node</th>
+                    <th>Role</th>
+                    <th>State</th>
+                    <th>Current URL</th>
+                    <th>Alive?</th>
+                </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+        </table>
 
-    <h2>Check Job Status</h2>
-    <input type="text" id="checkJobId" placeholder="Job ID" style="width:300px" />
-    <button id="checkBtn">Check</button>
-    <pre id="statusResult"></pre>
+        <h2>Check Job Status</h2>
+        <input type="text" id="checkJobId" placeholder="Job ID" style="width:300px" />
+        <button id="checkBtn">Check</button>
+        <pre id="statusResult"></pre>
+    </div>
 
     <script>
+        document.getElementById('adminCheckbox').onchange = function () {
+            const adminSection = document.getElementById('adminSection');
+            adminSection.classList.toggle('hidden', !this.checked);
+        };
+
         document.getElementById('checkBtn').onclick = async () => {
             const id = document.getElementById('checkJobId').value;
             if (!id) return alert('Enter a Job ID');
@@ -99,6 +189,7 @@
                     ? `Job started: ${data.jobId}`
                     : `Error: ${JSON.stringify(data)}`;
         };
+
         async function load() {
             const res = await fetch('/monitor');
             const data = await res.json();
@@ -107,15 +198,16 @@
             data.forEach(n => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-          <td>${n.nodeId}</td>
-          <td>${n.role}</td>
-          <td>${n.state}</td>
-          <td>${n.currentUrl || ''}</td>
-          <td>${n.alive ? '✅' : '❌'}</td>
-        `;
+            <td>${n.nodeId}</td>
+            <td>${n.role}</td>
+            <td>${n.state}</td>
+            <td>${n.currentUrl || ''}</td>
+            <td>${n.alive ? '✅' : '❌'}</td>
+          `;
                 tbody.appendChild(tr);
             });
         }
+
         document.getElementById('refresh').onclick = load;
         load();
     </script>
