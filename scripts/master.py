@@ -17,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import boto3
-
+from urllib.parse import urlparse
 from nltk.stem.porter import PorterStemmer
 from db import get_connection
 
@@ -87,22 +87,14 @@ def start_job():
 
     # 2) Read manual URLs from textarea
     seed_text = request.form.get('seedUrls', '')
-    manual_urls = [
-        u.strip()
-        for u in seed_text.splitlines()
-        if u.strip()
-    ]
+    manual_urls = [u.strip() for u in seed_text.splitlines() if u.strip()]
 
     # 3) Read URLs from uploaded file (if any)
     file = request.files.get('urlFile')
     file_urls = []
     if file:
         content = file.read().decode('utf-8')
-        file_urls = [
-            u.strip()
-            for u in content.splitlines()
-            if u.strip()
-        ]
+        file_urls = [u.strip() for u in content.splitlines() if u.strip()]
 
     # 4) Combine & dedupe
     urls = list(dict.fromkeys(manual_urls + file_urls))
@@ -116,13 +108,20 @@ def start_job():
     with conn.cursor() as cur:
         for url in urls:
             job_id = str(uuid.uuid4())
+
+            # compute domain flag (True if no path or just '/')
+            p = urlparse(url)
+            is_domain = (p.path in ('', '/'))
+
             cur.execute(
                 """
-                INSERT INTO jobs (job_id, seed_url, depth_limit, created_at)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO jobs 
+                  (job_id, seed_url, depth_limit, domain, created_at)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (job_id, url, depth_limit, now)
+                (job_id, url, depth_limit, is_domain, now)
             )
+
             sqs.send_message(
                 QueueUrl=CRAWL_QUEUE_URL,
                 MessageBody=json.dumps({
@@ -132,14 +131,13 @@ def start_job():
                 })
             )
             job_ids.append(job_id)
+
     conn.commit()
     conn.close()
 
     # 6) Clear node status and respond
     node_status.clear()
     return jsonify({'jobIds': job_ids}), 202
-
-
 @app.route('/jobs/<job_id>')
 def get_job_status(job_id):
     conn = get_connection()

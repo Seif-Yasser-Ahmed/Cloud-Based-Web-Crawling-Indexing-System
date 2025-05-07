@@ -90,15 +90,15 @@ def crawl_task(thread_id: str, msg):
     url = body.get('url')
     depth = int(body.get('depth', 0))
 
+    # Mandatory fields
     if not job_id or not url:
         sqs.delete_message(QueueUrl=CRAWL_QUEUE_URL, ReceiptHandle=receipt)
         return
 
     update_state(thread_id, 'waiting')
 
-    # SQS visibility heartbeat
+    # Start visibility heartbeat
     stop_vis = threading.Event()
-
     def vis_hb():
         while not stop_vis.wait(HEARTBEAT_INTERVAL):
             try:
@@ -107,110 +107,118 @@ def crawl_task(thread_id: str, msg):
                     ReceiptHandle=receipt,
                     VisibilityTimeout=VISIBILITY_TIMEOUT
                 )
-            except:
-                logger.exception("[%s] SQS heartbeat failed", thread_id)
+            except Exception:
+                logger.exception(f"[{thread_id}] SQS heartbeat failed")
     threading.Thread(target=vis_hb, daemon=True).start()
 
     try:
-        update_state(thread_id, 'processing', url)
-
-        # fetch job config once
+        # Fetch job configuration (depth_limit, seed_netloc, domain_flag)
         with job_config_lock:
             if job_id not in job_config:
                 conn = get_connection()
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT depth_limit, seed_url FROM jobs WHERE job_id=%s",
+                        "SELECT depth_limit, seed_url, domain FROM jobs WHERE job_id=%s",
                         (job_id,)
                     )
                     row = cur.fetchone() or {}
                 conn.close()
                 depth_limit = int(row.get('depth_limit', 1))
                 seed_netloc = urlparse(row.get('seed_url', '')).netloc
-                job_config[job_id] = (depth_limit, seed_netloc)
-            depth_limit, seed_netloc = job_config[job_id]
+                domain_flag = bool(row.get('domain', False))
+                job_config[job_id] = (depth_limit, seed_netloc, domain_flag)
+            depth_limit, seed_netloc, domain_flag = job_config[job_id]
 
-        # robots.txt
+        update_state(thread_id, 'processing', url)
+
+        # robots.txt handling
         p = urlparse(url)
         origin = f"{p.scheme}://{p.netloc}"
         rp = robot_parsers.get(origin)
         if rp is None:
             rp = RobotFileParser()
-            rp.set_url(origin+"/robots.txt")
+            rp.set_url(origin + "/robots.txt")
             try:
                 rp.read()
-            except:
-                logger.warning("[%s] can't read robots.txt", thread_id)
+            except Exception:
+                logger.warning(f"[{thread_id}] can't read robots.txt for {origin}")
             robot_parsers[origin] = rp
         if rp and not rp.can_fetch("*", url):
-            logger.info("[%s] blocked by robots.txt: %s", thread_id, url)
+            logger.info(f"[{thread_id}] blocked by robots.txt: {url}")
             return
         time.sleep(rp.crawl_delay("*") or DEFAULT_DELAY)
 
-        # fetch + retry
+        # Fetch page with retries
         success, html = False, None
-        for i in range(1, MAX_RETRIES+1):
+        for i in range(1, MAX_RETRIES + 1):
             try:
-                r = requests.get(url, timeout=10, headers={
-                                 'User-Agent': 'CrawlerWorker'})
+                r = requests.get(url, timeout=10, headers={'User-Agent': 'CrawlerWorker'})
                 r.raise_for_status()
                 html, success = r.text, True
                 break
-            except Exception as e:
-                time.sleep(2**(i-1))
+            except Exception:
+                time.sleep(2 ** (i - 1))
         if not success:
-            logger.error("[%s] fetch failed: %s", thread_id, url)
+            logger.error(f"[{thread_id}] fetch failed: {url}")
             return
 
-        # optional S3
+        # Optional upload to S3
         if s3:
             key = f"pages/{job_id}/{uuid4().hex}.html"
             s3.upload(key, html)
 
-        # update discovered_count
+        # Update discovered count
         conn = get_connection()
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE jobs SET discovered_count=discovered_count+1 WHERE job_id=%s",
+                "UPDATE jobs SET discovered_count = discovered_count + 1 WHERE job_id = %s",
                 (job_id,)
             )
         conn.commit()
         conn.close()
 
-        # extract & enqueue index
+        # Extract and enqueue index task (include domain_flag)
         soup = BeautifulSoup(html, 'html.parser')
         text = soup.get_text()
         sqs.send_message(
             QueueUrl=INDEX_QUEUE_URL,
-            MessageBody=json.dumps(
-                {'jobId': job_id, 'pageUrl': url, 'content': text})
+            MessageBody=json.dumps({
+                'jobId': job_id,
+                'pageUrl': url,
+                'content': text,
+                'domain': domain_flag
+            })
         )
 
-        # enqueue deeper links
+        # Enqueue deeper links based on domain_flag
         children = []
         for a in soup.find_all('a', href=True):
             link = urljoin(url, a['href'].split('#')[0])
             pp = urlparse(link)
             if pp.scheme not in ('http', 'https'):
                 continue
-            if not ALLOW_EXTERNAL and pp.netloc != seed_netloc:
+            if not domain_flag and pp.netloc != seed_netloc:
                 continue
             children.append(link)
         if depth < depth_limit:
             for link in children:
                 sqs.send_message(
                     QueueUrl=CRAWL_QUEUE_URL,
-                    MessageBody=json.dumps(
-                        {'jobId': job_id, 'url': link, 'depth': depth+1})
+                    MessageBody=json.dumps({
+                        'jobId': job_id,
+                        'url': link,
+                        'depth': depth + 1,
+                        "domain": domain_flag
+                    })
                 )
 
-        logger.info("[%s] crawled %s depth=%d links=%d",
-                    thread_id, url, depth, len(children))
+        logger.info(f"[{thread_id}] crawled {url} depth={depth} links={len(children)}")
 
     except Exception:
-        logger.exception("[%s] error processing %s", thread_id, url)
+        logger.exception(f"[{thread_id}] error processing {url}")
 
     finally:
+        # Clean up visibility heartbeat and DB state
         stop_vis.set()
         update_state(thread_id, 'waiting')
         sqs.delete_message(QueueUrl=CRAWL_QUEUE_URL, ReceiptHandle=receipt)
