@@ -28,24 +28,24 @@ It supports scalable crawling, robust text indexing with n-grams and stemming, a
 ## Project Structure  
 ```
 
-omarbayom-search-engine/
+Search-Engine/
 ├── README.md                  ← This file
-├── INSTALLATION\_GUIDE.md      ← Setup instructions
-├── USER\_MANUAL.md             ← End-user guide
+├── INSTALLATION_GUIDE.md      ← Setup instructions
+├── USER_MANUAL.md             ← End-user guide
 ├── requirements.txt           ← Core Python dependencies
 ├── Cloud/                     ← AWS-based deployment
 │   ├── requirements.txt
 │   ├── scripts/               ← Python services
-│   │   ├── aws\_adapter.py
-│   │   ├── crawler\_worker.py
+│   │   ├── aws_adapter.py
+│   │   ├── crawler_worker.py
 │   │   ├── db.py
 │   │   ├── indexer\_worker.py
-│   │   ├── init\_db.py
+│   │   ├── init_db.py
 │   │   ├── master.py
-│   │   ├── migrate\_heartbeats.py
+│   │   ├── migrate_heartbeats.py
 │   │   └── static/            ← Dashboard frontend assets
-│   └── web/
-└── Local/                     ← (Future) local-only mode
+│   └── web/                 
+└── Local/                     ← local-only mode
 
 ````
 
@@ -53,7 +53,7 @@ omarbayom-search-engine/
 
 ## Tools & Technologies  
 - **Language & Frameworks**: Python 3.8+, Flask, boto3, BeautifulSoup, NLTK  
-- **AWS Services**: SQS, S3, RDS (MySQL), DynamoDB (optional), Auto Scaling, Application Load Balancer  
+- **AWS Services**: SQS, S3, RDS (MySQL), Auto Scaling, Application Load Balancer  
 - **Database**: MySQL (RDS or self-hosted)  
 - **Others**: git, virtualenv, `.env` for configuration
 
